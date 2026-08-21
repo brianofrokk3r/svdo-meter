@@ -1,0 +1,337 @@
+use std::path::PathBuf;
+use std::str::FromStr;
+use std::time::Duration;
+
+use anyhow::Context;
+use clap::{Args, Parser, Subcommand};
+use meter_core::HarnessKind;
+
+#[derive(Debug, Parser)]
+#[command(name = "svdo-meter")]
+#[command(about = "Thin telemetry harness for agentic coding CLI sessions")]
+#[command(long_about = "Run an agent CLI with ticket telemetry and local event storage.")]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Commands {
+    #[command(about = "Run measured agent CLI work")]
+    #[command(
+        after_help = "Examples:\n  svdo-meter run --ticket ENG-142 --harness codex PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --prompt-file prompt.txt"
+    )]
+    Run(RunArgs),
+    #[command(about = "Generate a local SVDO Trace report from JSONL telemetry")]
+    #[command(
+        after_help = "Examples:\n  svdo-meter report ENG-142\n  svdo-meter report --last 7d\n  svdo-meter report --label plan\n  svdo-meter report ENG-142 --format json\n  svdo-meter report --last 7d --format csv\n\nReports read .svdo/meter.jsonl under --workspace or the current directory. Without WORK, output is grouped by work identifier; records without one are shown as Unknown. Token output preserves input, output, cache, and total fields, with missing components shown distinctly from zero."
+    )]
+    Report(ReportArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RunArgs {
+    /// External ticket/work identifier used as the telemetry join key.
+    #[arg(long)]
+    pub ticket: String,
+
+    /// Optional human-readable label recorded on run events.
+    #[arg(long)]
+    pub label: Option<String>,
+
+    /// Agent CLI harness to execute. v0.1 supports `codex`.
+    #[arg(long)]
+    pub harness: HarnessKind,
+
+    /// Workspace directory passed to the harness and used for local telemetry.
+    #[arg(long)]
+    pub workspace: Option<PathBuf>,
+
+    /// Provider session/thread ID to resume instead of auto-discovery.
+    #[arg(long)]
+    pub session: Option<String>,
+
+    /// Harness-specific model selection. For Codex this is passed to Codex.
+    #[arg(long)]
+    pub model: Option<String>,
+
+    /// Read the agent prompt from a UTF-8 text file.
+    #[arg(long, value_name = "PATH", conflicts_with = "prompt")]
+    pub prompt_file: Option<PathBuf>,
+
+    /// Prompt or work instruction forwarded to the selected harness.
+    #[arg(
+        value_name = "PROMPT",
+        required_unless_present = "prompt_file",
+        conflicts_with = "prompt_file"
+    )]
+    pub prompt: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct ReportArgs {
+    /// Optional work identifier. When omitted, results are grouped by work identifier.
+    #[arg(value_name = "WORK")]
+    pub work: Option<String>,
+
+    /// Workspace containing `.svdo/meter.jsonl`. Defaults to the current directory.
+    #[arg(long)]
+    pub workspace: Option<PathBuf>,
+
+    /// Include only telemetry observed within a recent duration such as `7d`, `12h`, or `30m`.
+    #[arg(long, value_name = "DURATION")]
+    pub last: Option<ReportDuration>,
+
+    /// Include only telemetry records with this label.
+    #[arg(long)]
+    pub label: Option<String>,
+
+    /// Output format for the report.
+    #[arg(long, default_value_t = ReportFormat::Terminal)]
+    pub format: ReportFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportFormat {
+    Terminal,
+    Json,
+    Csv,
+}
+
+impl std::fmt::Display for ReportFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
+            Self::Terminal => "terminal",
+            Self::Json => "json",
+            Self::Csv => "csv",
+        };
+        f.write_str(value)
+    }
+}
+
+impl FromStr for ReportFormat {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "terminal" => Ok(Self::Terminal),
+            "json" => Ok(Self::Json),
+            "csv" => Ok(Self::Csv),
+            other => Err(format!(
+                "unsupported report format `{other}`; expected terminal, json, or csv"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReportDuration(Duration);
+
+impl ReportDuration {
+    pub fn as_duration(self) -> Duration {
+        self.0
+    }
+}
+
+impl FromStr for ReportDuration {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let Some(unit) = value.chars().last() else {
+            return Err("duration cannot be empty".to_owned());
+        };
+        let number = &value[..value.len().saturating_sub(unit.len_utf8())];
+        let amount = number
+            .parse::<u64>()
+            .map_err(|_| "duration must start with a whole number".to_owned())?;
+        if amount == 0 {
+            return Err("duration must be greater than zero".to_owned());
+        }
+        let seconds = match unit {
+            'd' => amount.saturating_mul(24 * 60 * 60),
+            'h' => amount.saturating_mul(60 * 60),
+            'm' => amount.saturating_mul(60),
+            's' => amount,
+            _ => {
+                return Err(
+                    "duration must end with one of: d for days, h for hours, m for minutes, s for seconds"
+                        .to_owned(),
+                );
+            }
+        };
+        Ok(Self(Duration::from_secs(seconds)))
+    }
+}
+
+pub fn resolve_prompt(args: &RunArgs) -> anyhow::Result<String> {
+    if let Some(prompt) = &args.prompt {
+        return Ok(prompt.clone());
+    }
+    if let Some(path) = &args.prompt_file {
+        return std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read prompt file `{}`", path.display()));
+    }
+    unreachable!("clap requires either an inline prompt or --prompt-file")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use anyhow::Context;
+    use clap::Parser;
+
+    use super::{Cli, Commands, ReportFormat, resolve_prompt};
+
+    #[test]
+    fn resolves_inline_prompt() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "run",
+            "--ticket",
+            "ENG-142",
+            "--harness",
+            "codex",
+            "Do work",
+        ])?;
+        let args = match cli.command {
+            Commands::Run(args) => args,
+            Commands::Report(_) => panic!("expected run command"),
+        };
+
+        assert_eq!(resolve_prompt(&args)?, "Do work");
+        Ok(())
+    }
+
+    #[test]
+    fn resolves_prompt_file_contents() -> anyhow::Result<()> {
+        let path = unique_temp_path("svdo-meter-prompt-success.txt");
+        fs::write(&path, "Review the diff\nThen run tests\n")?;
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "run",
+            "--ticket",
+            "ENG-142",
+            "--harness",
+            "codex",
+            "--prompt-file",
+            path.to_str()
+                .context("temporary prompt path must be UTF-8")?,
+        ])?;
+        let args = match cli.command {
+            Commands::Run(args) => args,
+            Commands::Report(_) => panic!("expected run command"),
+        };
+
+        assert_eq!(resolve_prompt(&args)?, "Review the diff\nThen run tests\n");
+        fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn missing_prompt_file_reports_path() -> anyhow::Result<()> {
+        let path = unique_temp_path("svdo-meter-missing-prompt.txt");
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "run",
+            "--ticket",
+            "ENG-142",
+            "--harness",
+            "codex",
+            "--prompt-file",
+            path.to_str()
+                .context("temporary prompt path must be UTF-8")?,
+        ])?;
+        let args = match cli.command {
+            Commands::Run(args) => args,
+            Commands::Report(_) => panic!("expected run command"),
+        };
+
+        let error = resolve_prompt(&args)
+            .err()
+            .context("expected read failure")?;
+        let message = format!("{error:#}");
+        assert!(message.contains("failed to read prompt file"));
+        assert!(message.contains(&path.display().to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_inline_prompt_with_prompt_file() -> anyhow::Result<()> {
+        let path = unique_temp_path("svdo-meter-conflict-prompt.txt");
+        let result = Cli::try_parse_from([
+            "svdo-meter",
+            "run",
+            "--ticket",
+            "ENG-142",
+            "--harness",
+            "codex",
+            "--prompt-file",
+            path.to_str()
+                .context("temporary prompt path must be UTF-8")?,
+            "Do work",
+        ]);
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_missing_prompt_source() {
+        let result = Cli::try_parse_from([
+            "svdo-meter",
+            "run",
+            "--ticket",
+            "ENG-142",
+            "--harness",
+            "codex",
+        ]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_report_work_and_json_format() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["svdo-meter", "report", "ENG-142", "--format", "json"])?;
+        let args = match cli.command {
+            Commands::Report(args) => args,
+            Commands::Run(_) => panic!("expected report command"),
+        };
+
+        assert_eq!(args.work.as_deref(), Some("ENG-142"));
+        assert_eq!(args.format, ReportFormat::Json);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_report_last_duration_and_label() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["svdo-meter", "report", "--last", "7d", "--label", "plan"])?;
+        let args = match cli.command {
+            Commands::Report(args) => args,
+            Commands::Run(_) => panic!("expected report command"),
+        };
+
+        assert_eq!(args.work, None);
+        assert_eq!(args.label.as_deref(), Some("plan"));
+        assert_eq!(
+            args.last.map(|duration| duration.as_duration().as_secs()),
+            Some(604_800)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_invalid_report_format() {
+        let result = Cli::try_parse_from(["svdo-meter", "report", "--format", "yaml"]);
+
+        assert!(result.is_err());
+    }
+
+    fn unique_temp_path(file_name: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        std::env::temp_dir().join(format!("{nanos}-{file_name}"))
+    }
+}
