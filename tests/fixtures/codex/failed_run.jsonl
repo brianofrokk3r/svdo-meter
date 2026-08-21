@@ -1,0 +1,4 @@
+{"type":"session.created","session_id":"019c8a42-f72-failed"}
+{"type":"command.started","command_id":"cmd-fail","command_kind":"shell"}
+{"type":"command.completed","command_id":"cmd-fail","success":false,"exit_code":101,"duration_ms":900}
+{"type":"error","message":"tests failed"}
