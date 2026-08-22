@@ -9,6 +9,7 @@ It associates a ticket/work identifier with an agent CLI run, invokes or resumes
 The v0.1 baseline centers on:
 
 - `svdo-meter run`
+- `svdo-meter telemetry`
 - the `codex` harness
 - local JSONL telemetry at `.svdo/meter.jsonl`
 - rebuildable session association from `session.discovered` events
@@ -21,6 +22,7 @@ The CLI is built with Clap, so command help is available from the binary:
 ```bash
 svdo-meter --help
 svdo-meter run --help
+svdo-meter telemetry --help
 ```
 
 If running from source:
@@ -28,6 +30,7 @@ If running from source:
 ```bash
 cargo run -p svdo-meter -- --help
 cargo run -p svdo-meter -- run --help
+cargo run -p svdo-meter -- telemetry --help
 ```
 
 ## Compile
@@ -49,6 +52,7 @@ Run it from the build output:
 ```bash
 ./target/debug/svdo-meter --help
 ./target/debug/svdo-meter run --help
+./target/debug/svdo-meter telemetry --help
 ```
 
 Build the optimized release binary:
@@ -143,6 +147,17 @@ By default, events are written to:
 Each line is one immutable canonical JSON event. The log is the source of truth; session registries and reports are rebuildable projections.
 
 Raw provider payloads are not persisted by default. This avoids storing prompts, model responses, command output, tool results, environment variables, secrets, and other sensitive content unless raw retention is explicitly enabled in code/configuration.
+
+Inspect local telemetry without modifying `.svdo/meter.jsonl`:
+
+```bash
+svdo-meter telemetry sessions --workspace ~/code/app
+svdo-meter telemetry runs --workspace ~/code/app
+svdo-meter telemetry inspect 018f6f1b-97f1-7c04-9a96-111111111111 --workspace ~/code/app
+svdo-meter telemetry inspect sess-abc123 --workspace ~/code/app
+```
+
+The telemetry inspection commands tolerate missing or empty telemetry files, report malformed JSONL lines with line numbers, and call out missing token fields on token-bearing records.
 
 ## More Documentation
 

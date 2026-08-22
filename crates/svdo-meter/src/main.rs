@@ -5,10 +5,13 @@ mod wiring;
 use anyhow::Context;
 use chrono::{Duration as ChronoDuration, Utc};
 use clap::Parser;
-use cli::{Cli, Commands, ReportFormat};
+use cli::{Cli, Commands, ReportFormat, TelemetryCommands};
 use meter_core::{ModelName, SessionId, TicketId};
 use meter_engine::RunRequest;
-use meter_report::{ReportQuery, render_csv, render_json, render_terminal};
+use meter_report::{
+    ReportQuery, render_csv, render_inspection, render_json, render_runs, render_sessions,
+    render_terminal,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -76,6 +79,22 @@ async fn main() -> anyhow::Result<()> {
                     render_json(&report).context("failed to render JSON report")?
                 }
                 ReportFormat::Csv => render_csv(&report),
+            };
+            println!("{output}");
+        }
+        Commands::Telemetry(args) => {
+            let telemetry_path = wiring::default_telemetry_path(&args.workspace);
+            let inspection =
+                wiring::load_telemetry_inspection(&telemetry_path).with_context(|| {
+                    format!(
+                        "failed to read telemetry from `{}`",
+                        telemetry_path.display()
+                    )
+                })?;
+            let output = match args.command {
+                TelemetryCommands::Sessions => render_sessions(&inspection),
+                TelemetryCommands::Runs => render_runs(&inspection),
+                TelemetryCommands::Inspect(args) => render_inspection(&inspection, &args.id),
             };
             println!("{output}");
         }

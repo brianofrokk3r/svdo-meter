@@ -27,6 +27,11 @@ pub enum Commands {
         after_help = "Examples:\n  svdo-meter report ENG-142\n  svdo-meter report --last 7d\n  svdo-meter report --label plan\n  svdo-meter report ENG-142 --format json\n  svdo-meter report --last 7d --format csv\n\nReports read .svdo/meter.jsonl under --workspace or the current directory. Without WORK, output is grouped by work identifier; records without one are shown as Unknown. Token output preserves input, output, cache, and total fields, with missing components shown distinctly from zero."
     )]
     Report(ReportArgs),
+    #[command(about = "Inspect local SVDO Meter telemetry")]
+    #[command(
+        after_help = "Examples:\n  svdo-meter telemetry sessions\n  svdo-meter telemetry runs\n  svdo-meter telemetry inspect 018f6f1b-97f1-7c04-9a96-111111111111\n  svdo-meter telemetry inspect sess-abc123\n\nTelemetry inspection reads .svdo/meter.jsonl under --workspace or the current directory. Malformed JSONL lines are reported as diagnostics while valid records remain inspectable."
+    )]
+    Telemetry(TelemetryArgs),
 }
 
 #[derive(Debug, Args)]
@@ -89,6 +94,32 @@ pub struct ReportArgs {
     /// Output format for the report.
     #[arg(long, default_value_t = ReportFormat::Terminal)]
     pub format: ReportFormat,
+}
+
+#[derive(Debug, Args)]
+pub struct TelemetryArgs {
+    /// Workspace containing `.svdo/meter.jsonl`. Defaults to the current directory.
+    #[arg(long, global = true)]
+    pub workspace: Option<PathBuf>,
+
+    #[command(subcommand)]
+    pub command: TelemetryCommands,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TelemetryCommands {
+    /// List discovered local telemetry sessions.
+    Sessions,
+    /// List telemetry runs and work associations.
+    Runs,
+    /// Inspect ordered telemetry events for a run or session identifier.
+    Inspect(TelemetryInspectArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct TelemetryInspectArgs {
+    /// Run identifier or provider session identifier to inspect.
+    pub id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,9 +211,9 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use anyhow::Context;
-    use clap::Parser;
+    use clap::{CommandFactory, Parser};
 
-    use super::{Cli, Commands, ReportFormat, resolve_prompt};
+    use super::{Cli, Commands, ReportFormat, TelemetryCommands, resolve_prompt};
 
     #[test]
     fn resolves_inline_prompt() -> anyhow::Result<()> {
@@ -198,6 +229,7 @@ mod tests {
         let args = match cli.command {
             Commands::Run(args) => args,
             Commands::Report(_) => panic!("expected run command"),
+            Commands::Telemetry(_) => panic!("expected run command"),
         };
 
         assert_eq!(resolve_prompt(&args)?, "Do work");
@@ -222,6 +254,7 @@ mod tests {
         let args = match cli.command {
             Commands::Run(args) => args,
             Commands::Report(_) => panic!("expected run command"),
+            Commands::Telemetry(_) => panic!("expected run command"),
         };
 
         assert_eq!(resolve_prompt(&args)?, "Review the diff\nThen run tests\n");
@@ -246,6 +279,7 @@ mod tests {
         let args = match cli.command {
             Commands::Run(args) => args,
             Commands::Report(_) => panic!("expected run command"),
+            Commands::Telemetry(_) => panic!("expected run command"),
         };
 
         let error = resolve_prompt(&args)
@@ -297,6 +331,7 @@ mod tests {
         let args = match cli.command {
             Commands::Report(args) => args,
             Commands::Run(_) => panic!("expected report command"),
+            Commands::Telemetry(_) => panic!("expected report command"),
         };
 
         assert_eq!(args.work.as_deref(), Some("ENG-142"));
@@ -310,6 +345,7 @@ mod tests {
         let args = match cli.command {
             Commands::Report(args) => args,
             Commands::Run(_) => panic!("expected report command"),
+            Commands::Telemetry(_) => panic!("expected report command"),
         };
 
         assert_eq!(args.work, None);
@@ -326,6 +362,36 @@ mod tests {
         let result = Cli::try_parse_from(["svdo-meter", "report", "--format", "yaml"]);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_telemetry_subcommands() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["svdo-meter", "telemetry", "sessions"])?;
+        match cli.command {
+            Commands::Telemetry(args) => match args.command {
+                TelemetryCommands::Sessions => {}
+                _ => panic!("expected sessions command"),
+            },
+            _ => panic!("expected telemetry command"),
+        }
+
+        let cli = Cli::try_parse_from(["svdo-meter", "telemetry", "inspect", "sess-1"])?;
+        match cli.command {
+            Commands::Telemetry(args) => match args.command {
+                TelemetryCommands::Inspect(args) => assert_eq!(args.id, "sess-1"),
+                _ => panic!("expected inspect command"),
+            },
+            _ => panic!("expected telemetry command"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn help_documents_telemetry_group() {
+        let help = Cli::command().render_help().to_string();
+
+        assert!(help.contains("telemetry"));
+        assert!(help.contains("Inspect local SVDO Meter telemetry"));
     }
 
     fn unique_temp_path(file_name: &str) -> std::path::PathBuf {

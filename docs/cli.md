@@ -2,10 +2,12 @@
 
 ## Commands
 
-SVDO Meter currently exposes one functional command:
+SVDO Meter currently exposes these functional commands:
 
 ```text
 svdo-meter run
+svdo-meter report
+svdo-meter telemetry
 ```
 
 Help is available through Clap:
@@ -13,6 +15,11 @@ Help is available through Clap:
 ```bash
 svdo-meter --help
 svdo-meter run --help
+svdo-meter report --help
+svdo-meter telemetry --help
+svdo-meter telemetry sessions --help
+svdo-meter telemetry runs --help
+svdo-meter telemetry inspect --help
 ```
 
 From source:
@@ -20,6 +27,8 @@ From source:
 ```bash
 cargo run -p svdo-meter -- --help
 cargo run -p svdo-meter -- run --help
+cargo run -p svdo-meter -- report --help
+cargo run -p svdo-meter -- telemetry --help
 ```
 
 Build and install instructions are in [compile.md](compile.md).
@@ -62,6 +71,40 @@ svdo-meter run \
 | `--model <MODEL>` | No | Harness-specific model configuration. For Codex this is passed as a Codex model argument. |
 
 SVDO Meter reads `--prompt-file` before starting the harness. Missing, unreadable, or non-UTF-8 files fail fast with a path-aware CLI error.
+
+## `svdo-meter telemetry`
+
+Inspects local SVDO Meter JSONL telemetry without modifying the append-only event log.
+
+```bash
+svdo-meter telemetry sessions --workspace ~/code/app
+svdo-meter telemetry runs --workspace ~/code/app
+svdo-meter telemetry inspect 018f6f1b-97f1-7c04-9a96-111111111111 --workspace ~/code/app
+svdo-meter telemetry inspect sess-abc123 --workspace ~/code/app
+```
+
+### Subcommands
+
+| Command | Description |
+|---|---|
+| `svdo-meter telemetry sessions` | Lists discovered session identifiers with work, label, harness, run, discovery source, first-seen timestamp, and record count context. |
+| `svdo-meter telemetry runs` | Lists run identifiers with work, label, harness, session association, first/last event timestamps, record count, and token completeness status. |
+| `svdo-meter telemetry inspect <ID>` | Shows ordered telemetry events for a matching run ID or session ID, including event line number, timestamp, type, work, run, session, harness, label, and concise payload details. |
+
+### Arguments
+
+| Argument | Required | Description |
+|---|---:|---|
+| `--workspace <PATH>` | No | Workspace containing `.svdo/meter.jsonl`. Defaults to the current directory. |
+| `<ID>` | Yes for `inspect` | Run identifier or provider session identifier to inspect. |
+
+Telemetry inspection reads:
+
+```text
+<workspace>/.svdo/meter.jsonl
+```
+
+Missing or empty telemetry files return clear non-error output. Malformed JSONL lines are reported with line numbers under `Diagnostics`, and valid records remain inspectable. Token-bearing events such as `usage.reported`, `run.completed`, and `run.failed` call out missing token fields when expected components are absent.
 
 ## Codex Harness
 
