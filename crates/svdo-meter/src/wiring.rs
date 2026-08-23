@@ -63,9 +63,15 @@ pub fn load_telemetry_inspection(path: &Path) -> Result<TelemetryInspection, std
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::load_telemetry_inspection;
+    use meter_report::{ReportQuery, render_inspection, render_json, render_runs, render_sessions};
+
+    use super::{default_telemetry_path, load_report, load_telemetry_inspection};
+
+    const REPORT_FIXTURE: &str = include_str!("../../../tests/fixtures/report/single_work.jsonl");
+    const TELEMETRY_FIXTURE: &str = include_str!("../../../tests/fixtures/telemetry/valid.jsonl");
 
     #[test]
     fn missing_telemetry_file_loads_empty_inspection() -> std::io::Result<()> {
@@ -76,6 +82,66 @@ mod tests {
         assert!(inspection.records.is_empty());
         assert!(inspection.diagnostics.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn default_telemetry_path_uses_workspace_svdo_log() {
+        let workspace = Some(std::path::PathBuf::from("/tmp/svdo-workspace"));
+
+        assert_eq!(
+            default_telemetry_path(&workspace),
+            std::path::PathBuf::from("/tmp/svdo-workspace/.svdo/meter.jsonl")
+        );
+    }
+
+    #[test]
+    fn report_boundary_loads_fixture_from_workspace_path() -> std::io::Result<()> {
+        let workspace = unique_temp_path("svdo-meter-report-workspace");
+        let telemetry_path = write_workspace_telemetry(&workspace, REPORT_FIXTURE)?;
+
+        let report = load_report(
+            &telemetry_path,
+            &ReportQuery {
+                work: Some("ENG-142".to_owned()),
+                label: Some("plan".to_owned()),
+                since: None,
+            },
+        )?;
+
+        assert_eq!(report.groups.len(), 1);
+        assert_eq!(report.groups[0].work, "ENG-142");
+        assert_eq!(report.groups[0].runs, 2);
+        assert!(render_json(&report).is_ok());
+        fs::remove_dir_all(workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn telemetry_boundary_loads_fixture_for_all_rendered_subcommands() -> std::io::Result<()> {
+        let workspace = unique_temp_path("svdo-meter-telemetry-workspace");
+        let telemetry_path = write_workspace_telemetry(&workspace, TELEMETRY_FIXTURE)?;
+
+        let inspection = load_telemetry_inspection(&telemetry_path)?;
+        let sessions = render_sessions(&inspection);
+        let runs = render_runs(&inspection);
+        let inspected = render_inspection(&inspection, "sess-telemetry-1");
+
+        assert!(sessions.contains("sess-telemetry-1"));
+        assert!(runs.contains("ENG-142"));
+        assert!(inspected.contains("usage.reported"));
+        fs::remove_dir_all(workspace)?;
+        Ok(())
+    }
+
+    fn write_workspace_telemetry(
+        workspace: &std::path::Path,
+        contents: &str,
+    ) -> std::io::Result<std::path::PathBuf> {
+        let svdo_dir = workspace.join(".svdo");
+        fs::create_dir_all(&svdo_dir)?;
+        let telemetry_path = svdo_dir.join("meter.jsonl");
+        fs::write(&telemetry_path, contents)?;
+        Ok(telemetry_path)
     }
 
     fn unique_temp_path(file_name: &str) -> std::path::PathBuf {
