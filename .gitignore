@@ -3,5 +3,13 @@
 .codex
 .svdo
 .specify
+!.specify/
+!.specify/memory/
+!.specify/memory/constitution.md
 specs
+!specs/
+!specs/9ae4b478-add-pr-ci-workflow-for-rust-quality-chec/
+!specs/9ae4b478-add-pr-ci-workflow-for-rust-quality-chec/spec.md
+!specs/9ae4b478-add-pr-ci-workflow-for-rust-quality-chec/plan.md
+!specs/9ae4b478-add-pr-ci-workflow-for-rust-quality-chec/tasks.md
 target
