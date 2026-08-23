@@ -4,14 +4,15 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use meter_core::{
-    CodexConfig, EventContext, EventPayload, HarnessConfig, HarnessKind, MeterEvent,
-    RawEventRetention, RunCompleted, RunFailed, RunId, RunMetrics, RunStarted, SessionDiscovered,
-    SessionId, TicketId,
+    EventContext, EventPayload, HarnessKind, MeterEvent, ModelName, RawEventRetention,
+    RunCompleted, RunFailed, RunId, RunMetrics, RunStarted, SessionDiscovered, SessionId, TicketId,
 };
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-use crate::{EventStore, HarnessAdapter, HarnessError, HarnessRunRequest, StoreError};
+use crate::{
+    EventStore, HarnessAdapter, HarnessError, HarnessOptions, HarnessRunRequest, StoreError,
+};
 
 #[derive(Debug, Clone)]
 pub struct RunRequest {
@@ -20,7 +21,9 @@ pub struct RunRequest {
     pub harness: HarnessKind,
     pub workspace: Option<PathBuf>,
     pub session_override: Option<SessionId>,
-    pub config: HarnessConfig,
+    pub model: Option<ModelName>,
+    pub raw_event_retention: RawEventRetention,
+    pub options: HarnessOptions,
     pub prompt: String,
 }
 
@@ -68,7 +71,6 @@ impl RunEngine {
             .ok_or(RunError::MissingAdapter(request.harness))?
             .clone();
         let run_id = RunId::new();
-        let requested_model = requested_model(&request.config);
         let selected_session = match request.session_override.clone() {
             Some(session_id) => Some(session_id),
             None => {
@@ -86,7 +88,7 @@ impl RunEngine {
             ticket_id: request.ticket_id.clone(),
             label: request.label.clone(),
             harness: request.harness,
-            requested_model,
+            requested_model: request.model.clone(),
             resolved_model: None,
             session_id: selected_session.clone(),
             workspace: request.workspace.clone(),
@@ -122,8 +124,9 @@ impl RunEngine {
             context: base_context.clone(),
             prompt: request.prompt,
             session_id: selected_session.clone(),
-            raw_event_retention: raw_retention(&request.config),
-            config: request.config,
+            model: request.model,
+            raw_event_retention: request.raw_event_retention,
+            options: request.options,
         };
         let harness_result = adapter.run(harness_request, tx.clone()).await;
         let elapsed_ms = saturating_elapsed_ms(started);
@@ -206,21 +209,6 @@ impl RunEngine {
     }
 }
 
-fn requested_model(config: &HarnessConfig) -> Option<meter_core::ModelName> {
-    match config {
-        HarnessConfig::Codex(CodexConfig { model, .. })
-        | HarnessConfig::Claude(meter_core::ClaudeConfig { model })
-        | HarnessConfig::Gemini(meter_core::GeminiConfig { model }) => model.clone(),
-    }
-}
-
-fn raw_retention(config: &HarnessConfig) -> RawEventRetention {
-    match config {
-        HarnessConfig::Codex(config) => config.raw_event_retention.clone(),
-        HarnessConfig::Claude(_) | HarnessConfig::Gemini(_) => RawEventRetention::Disabled,
-    }
-}
-
 fn saturating_elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
@@ -243,7 +231,7 @@ mod tests {
 
     use async_trait::async_trait;
     use meter_core::{
-        CodexConfig, EventContext, EventPayload, EventType, HarnessConfig, HarnessKind, MeterEvent,
+        EventContext, EventPayload, EventType, HarnessKind, MeterEvent, ModelName,
         RawEventRetention, SessionDiscovered, SessionId,
     };
 
@@ -290,6 +278,8 @@ mod tests {
     #[derive(Debug)]
     struct FakeAdapter {
         observed_sessions: Arc<Mutex<Vec<Option<SessionId>>>>,
+        observed_models: Arc<Mutex<Vec<Option<ModelName>>>>,
+        observed_retention: Arc<Mutex<Vec<RawEventRetention>>>,
         result: HarnessRunResult,
     }
 
@@ -318,6 +308,14 @@ mod tests {
                 .lock()
                 .unwrap_or_else(|err| panic!("{err}"))
                 .push(request.session_id.clone());
+            self.observed_models
+                .lock()
+                .unwrap_or_else(|err| panic!("{err}"))
+                .push(request.model.clone());
+            self.observed_retention
+                .lock()
+                .unwrap_or_else(|err| panic!("{err}"))
+                .push(request.raw_event_retention.clone());
             if let Some(session_id) = &self.result.session_id {
                 events
                     .send(MeterEvent::new(
@@ -340,10 +338,9 @@ mod tests {
             harness: HarnessKind::Codex,
             workspace: Some(PathBuf::from(".")),
             session_override,
-            config: HarnessConfig::Codex(CodexConfig {
-                raw_event_retention: RawEventRetention::Disabled,
-                ..CodexConfig::default()
-            }),
+            model: None,
+            raw_event_retention: RawEventRetention::Disabled,
+            options: HarnessOptions::empty(),
             prompt: "Do work".to_owned(),
         }
     }
@@ -352,9 +349,13 @@ mod tests {
     async fn first_run_discovers_session_and_completes() {
         let store = Arc::new(MemoryStore::default());
         let observed = Arc::new(Mutex::new(Vec::new()));
+        let observed_models = Arc::new(Mutex::new(Vec::new()));
+        let observed_retention = Arc::new(Mutex::new(Vec::new()));
         let session_id = SessionId::new("session-new").unwrap_or_else(|err| panic!("{err}"));
         let adapter = Arc::new(FakeAdapter {
             observed_sessions: Arc::clone(&observed),
+            observed_models,
+            observed_retention,
             result: HarnessRunResult {
                 success: true,
                 session_id: Some(session_id.clone()),
@@ -398,6 +399,8 @@ mod tests {
     async fn later_run_resumes_known_session() {
         let store = Arc::new(MemoryStore::default());
         let observed = Arc::new(Mutex::new(Vec::new()));
+        let observed_models = Arc::new(Mutex::new(Vec::new()));
+        let observed_retention = Arc::new(Mutex::new(Vec::new()));
         let session_id = SessionId::new("session-existing").unwrap_or_else(|err| panic!("{err}"));
         let seed_context = EventContext {
             run_id: RunId::new(),
@@ -420,6 +423,8 @@ mod tests {
             .unwrap_or_else(|err| panic!("{err}"));
         let adapter = Arc::new(FakeAdapter {
             observed_sessions: Arc::clone(&observed),
+            observed_models,
+            observed_retention,
             result: HarnessRunResult {
                 success: true,
                 session_id: Some(session_id.clone()),
@@ -446,9 +451,13 @@ mod tests {
     async fn explicit_session_override_wins() {
         let store = Arc::new(MemoryStore::default());
         let observed = Arc::new(Mutex::new(Vec::new()));
+        let observed_models = Arc::new(Mutex::new(Vec::new()));
+        let observed_retention = Arc::new(Mutex::new(Vec::new()));
         let override_session = SessionId::new("override").unwrap_or_else(|err| panic!("{err}"));
         let adapter = Arc::new(FakeAdapter {
             observed_sessions: Arc::clone(&observed),
+            observed_models,
+            observed_retention,
             result: HarnessRunResult {
                 success: true,
                 session_id: Some(override_session.clone()),
@@ -472,11 +481,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn forwards_neutral_model_and_retention_to_adapter() {
+        let store = Arc::new(MemoryStore::default());
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let observed_models = Arc::new(Mutex::new(Vec::new()));
+        let observed_retention = Arc::new(Mutex::new(Vec::new()));
+        let adapter = Arc::new(FakeAdapter {
+            observed_sessions: observed,
+            observed_models: Arc::clone(&observed_models),
+            observed_retention: Arc::clone(&observed_retention),
+            result: HarnessRunResult {
+                success: true,
+                ..HarnessRunResult::default()
+            },
+        });
+        let engine = RunEngine::new(store.clone()).with_adapter(adapter);
+        let model = ModelName::new("gpt-5").unwrap_or_else(|err| panic!("{err}"));
+        let mut request = run_request("ENG-NEUTRAL", None);
+        request.model = Some(model.clone());
+        request.raw_event_retention = RawEventRetention::Full;
+
+        let _ = engine
+            .run(request)
+            .await
+            .unwrap_or_else(|err| panic!("{err}"));
+
+        assert_eq!(
+            observed_models
+                .lock()
+                .unwrap_or_else(|err| panic!("{err}"))
+                .as_slice(),
+            &[Some(model.clone())]
+        );
+        assert_eq!(
+            observed_retention
+                .lock()
+                .unwrap_or_else(|err| panic!("{err}"))
+                .as_slice(),
+            &[RawEventRetention::Full]
+        );
+        let start = store
+            .stream(EventQuery::default())
+            .await
+            .unwrap_or_else(|err| panic!("{err}"))
+            .into_iter()
+            .find(|event| event.event_type == EventType::RunStarted)
+            .unwrap_or_else(|| panic!("missing run start event"));
+        assert_eq!(start.requested_model, Some(model));
+    }
+
+    #[tokio::test]
     async fn failed_adapter_result_emits_run_failed() {
         let store = Arc::new(MemoryStore::default());
         let observed = Arc::new(Mutex::new(Vec::new()));
+        let observed_models = Arc::new(Mutex::new(Vec::new()));
+        let observed_retention = Arc::new(Mutex::new(Vec::new()));
         let adapter = Arc::new(FakeAdapter {
             observed_sessions: observed,
+            observed_models,
+            observed_retention,
             result: HarnessRunResult {
                 success: false,
                 exit_code: Some(2),
@@ -507,8 +570,12 @@ mod tests {
     async fn multiple_runs_for_one_ticket_have_distinct_run_ids() {
         let store = Arc::new(MemoryStore::default());
         let observed = Arc::new(Mutex::new(Vec::new()));
+        let observed_models = Arc::new(Mutex::new(Vec::new()));
+        let observed_retention = Arc::new(Mutex::new(Vec::new()));
         let adapter = Arc::new(FakeAdapter {
             observed_sessions: observed,
+            observed_models,
+            observed_retention,
             result: HarnessRunResult {
                 success: true,
                 ..HarnessRunResult::default()
