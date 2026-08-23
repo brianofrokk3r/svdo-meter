@@ -65,6 +65,7 @@ async fn main() -> anyhow::Result<()> {
                 work: args.work,
                 label: args.label,
                 since,
+                pricing: cli::resolve_pricing(&args)?,
             };
             let telemetry_path = wiring::default_telemetry_path(&args.workspace);
             let report = wiring::load_report(&telemetry_path, &query).with_context(|| {
