@@ -2,6 +2,7 @@
 
 ## 2026-08-23
 
+- Added explicit versions to internal workspace path dependencies so `cargo deny check` no longer treats them as wildcard dependencies.
 - Added live event sink selection for `svdo-meter run` with `--sink jsonl`, `--sink stdout`, and `--emit ndjson`.
 - Added stdout NDJSON event streaming while preserving default durable per-run JSONL telemetry under `.svdo/meter/`.
 - Added sink fan-out and failure behavior tests for normalized `MeterEvent` output.
