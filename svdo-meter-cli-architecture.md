@@ -314,6 +314,26 @@ JSON output:
 svdo-meter report ENG-142 --format json
 ```
 
+Local token cost estimation:
+
+```bash
+svdo-meter report ENG-142 --pricing-file pricing.json
+```
+
+Pricing files are UTF-8 JSON maps keyed by exact model identifier. Rates are expressed as cost per 1,000,000 tokens with independent fields for input, cached input, and output tokens:
+
+```json
+{
+  "gpt-5": {
+    "input_per_million": 1.25,
+    "cached_input_per_million": 0.125,
+    "output_per_million": 10.0
+  }
+}
+```
+
+If telemetry references a model without configured pricing, the report should mark cost as unavailable rather than inventing defaults.
+
 Possible future formats:
 
 ```text
@@ -1073,13 +1093,14 @@ Agent Time                11m 43s
 Input Tokens             118,316
 Cached Input              93,646
 Output Tokens             12,075
+Estimated Cost             $0.47
 
 Commands                      10
 Failed Commands                2
 Files Changed                  7
 ```
 
-This report contains only observed SVDO Meter facts.
+This report contains observed SVDO Meter facts. Estimated cost is a local report projection that exists only when the user supplies pricing configuration.
 
 ---
 

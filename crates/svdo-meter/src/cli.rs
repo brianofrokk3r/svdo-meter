@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 use meter_core::HarnessKind;
+use meter_report::PricingConfig;
 
 #[derive(Debug, Parser)]
 #[command(name = "svdo-meter")]
@@ -24,7 +25,7 @@ pub enum Commands {
     Run(RunArgs),
     #[command(about = "Generate a local SVDO Trace report from JSONL telemetry")]
     #[command(
-        after_help = "Examples:\n  svdo-meter report ENG-142\n  svdo-meter report --last 7d\n  svdo-meter report --label plan\n  svdo-meter report ENG-142 --format json\n  svdo-meter report --last 7d --format csv\n\nReports read .svdo/meter.jsonl under --workspace or the current directory. Without WORK, output is grouped by work identifier; records without one are shown as Unknown. Token output preserves input, output, cache, and total fields, with missing components shown distinctly from zero."
+        after_help = "Examples:\n  svdo-meter report ENG-142\n  svdo-meter report --last 7d\n  svdo-meter report --label plan\n  svdo-meter report ENG-142 --format json\n  svdo-meter report --last 7d --format csv\n  svdo-meter report --pricing-file pricing.json\n\nReports read .svdo/meter.jsonl under --workspace or the current directory. Without WORK, output is grouped by work identifier; records without one are shown as Unknown. Token output preserves input, output, cache, and total fields, with missing components shown distinctly from zero. Pricing rates are specified as cost per 1,000,000 tokens."
     )]
     Report(ReportArgs),
     #[command(about = "Inspect local SVDO Meter telemetry")]
@@ -94,6 +95,10 @@ pub struct ReportArgs {
     /// Output format for the report.
     #[arg(long, default_value_t = ReportFormat::Terminal)]
     pub format: ReportFormat,
+
+    /// Read a JSON model pricing map from a UTF-8 file. Rates are per 1,000,000 tokens.
+    #[arg(long, value_name = "PATH")]
+    pub pricing_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -205,6 +210,20 @@ pub fn resolve_prompt(args: &RunArgs) -> anyhow::Result<String> {
     unreachable!("clap requires either an inline prompt or --prompt-file")
 }
 
+pub fn resolve_pricing(args: &ReportArgs) -> anyhow::Result<Option<PricingConfig>> {
+    if let Some(path) = &args.pricing_file {
+        let value = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read pricing file `{}`", path.display()))?;
+        return serde_json::from_str(&value).with_context(|| {
+            format!(
+                "failed to parse pricing file `{}` as a model pricing map keyed by model identifier",
+                path.display()
+            )
+        }).map(Some);
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -213,7 +232,7 @@ mod tests {
     use anyhow::Context;
     use clap::{CommandFactory, Parser};
 
-    use super::{Cli, Commands, ReportFormat, TelemetryCommands, resolve_prompt};
+    use super::{Cli, Commands, ReportFormat, TelemetryCommands, resolve_pricing, resolve_prompt};
 
     #[test]
     fn resolves_inline_prompt() -> anyhow::Result<()> {
@@ -355,6 +374,56 @@ mod tests {
             Some(604_800)
         );
         Ok(())
+    }
+
+    #[test]
+    fn resolves_report_pricing_file_contents() -> anyhow::Result<()> {
+        let path = unique_temp_path("svdo-meter-pricing.json");
+        fs::write(
+            &path,
+            r#"{"gpt-5-mini":{"input_per_million":0.25,"cached_input_per_million":0.025,"output_per_million":2.0}}"#,
+        )?;
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "report",
+            "--pricing-file",
+            path.to_str()
+                .context("temporary pricing path must be UTF-8")?,
+        ])?;
+        let args = match cli.command {
+            Commands::Report(args) => args,
+            Commands::Run(_) => panic!("expected report command"),
+            Commands::Telemetry(_) => panic!("expected report command"),
+        };
+
+        let pricing = resolve_pricing(&args)?.context("expected pricing")?;
+        let model = pricing
+            .get("gpt-5-mini")
+            .context("expected gpt-5-mini pricing")?;
+        assert_eq!(model.input_per_million, Some(0.25));
+        assert_eq!(model.cached_input_per_million, Some(0.025));
+        assert_eq!(model.output_per_million, Some(2.0));
+        fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn report_help_documents_pricing_unit() {
+        let mut command = Cli::command();
+        let report = command
+            .find_subcommand_mut("report")
+            .expect("report subcommand exists");
+        let help = report.render_help().to_string();
+
+        assert!(help.contains("--pricing-file"));
+        assert!(help.contains("per 1,000,000 tokens"));
+    }
+
+    #[test]
+    fn rejects_inline_pricing_json_option() {
+        let result = Cli::try_parse_from(["svdo-meter", "report", "--pricing-json", "{}"]);
+
+        assert!(result.is_err());
     }
 
     #[test]

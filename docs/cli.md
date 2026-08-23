@@ -72,6 +72,49 @@ svdo-meter run \
 
 SVDO Meter reads `--prompt-file` before starting the harness. Missing, unreadable, or non-UTF-8 files fail fast with a path-aware CLI error.
 
+## `svdo-meter report`
+
+Generates a local SVDO Trace report from append-only JSONL telemetry.
+
+```bash
+svdo-meter report ENG-142
+svdo-meter report --last 7d
+svdo-meter report --label plan
+svdo-meter report ENG-142 --format json
+svdo-meter report --last 7d --format csv
+svdo-meter report ENG-142 --pricing-file pricing.json
+```
+
+### Arguments
+
+| Argument | Required | Description |
+|---|---:|---|
+| `<WORK>` | No | Optional work identifier. When omitted, results are grouped by work identifier. |
+| `--workspace <PATH>` | No | Workspace containing `.svdo/meter.jsonl`. Defaults to the current directory. |
+| `--last <DURATION>` | No | Include only telemetry observed within a recent duration such as `7d`, `12h`, or `30m`. |
+| `--label <LABEL>` | No | Include only telemetry records with this label. |
+| `--format <FORMAT>` | No | Output format. Supported values: `terminal`, `json`, `csv`. Defaults to `terminal`. |
+| `--pricing-file <PATH>` | No | UTF-8 JSON file containing the model pricing map. Rates are cost per 1,000,000 tokens. |
+
+Pricing JSON is keyed by exact model identifier. Each model can provide independent per-million rates for input, cached input, and output tokens:
+
+```json
+{
+  "gpt-5": {
+    "input_per_million": 1.25,
+    "cached_input_per_million": 0.125,
+    "output_per_million": 10.0
+  },
+  "gpt-5-mini": {
+    "input_per_million": 0.25,
+    "cached_input_per_million": 0.025,
+    "output_per_million": 2.0
+  }
+}
+```
+
+Cost estimation uses the telemetry model identity, preferring `resolved_model` and falling back to `requested_model`. If telemetry references a model that is not configured in the supplied pricing JSON, cost for that model is reported as unavailable and no default rate is invented.
+
 ## `svdo-meter telemetry`
 
 Inspects local SVDO Meter JSONL telemetry without modifying the append-only event log.
