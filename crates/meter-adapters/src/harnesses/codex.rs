@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use meter_core::{
-    CommandCompleted, CommandStarted, EventContext, EventPayload, FilesChanged, HarnessConfig,
-    HarnessEvent, HarnessKind, MeterEvent, RawEventRetention, RunMetrics, SessionDiscovered,
-    SessionId, TokenUsage, ToolCompleted, ToolStarted,
+    CommandCompleted, CommandStarted, EventContext, EventPayload, FilesChanged, HarnessEvent,
+    HarnessKind, MeterEvent, RawEventRetention, RunMetrics, SessionDiscovered, SessionId,
+    TokenUsage, ToolCompleted, ToolStarted,
 };
 use meter_engine::{
     EventSender, HarnessAdapter, HarnessCapabilities, HarnessError, HarnessRunRequest,
@@ -57,18 +57,10 @@ impl HarnessAdapter for CodexAdapter {
         request: HarnessRunRequest,
         events: EventSender,
     ) -> Result<HarnessRunResult, HarnessError> {
-        let HarnessConfig::Codex(config) = request.config else {
-            return Err(HarnessError::UnsupportedConfig);
-        };
-        let binary = if config.binary.as_os_str().is_empty() {
-            &self.binary
-        } else {
-            &config.binary
-        };
-        let mut command = Command::new(binary);
+        let mut command = Command::new(&self.binary);
         command.args(codex_argv(
             request.context.workspace.as_deref(),
-            config.model.as_ref(),
+            request.model.as_ref(),
             request.session_id.as_ref(),
             &request.prompt,
         ));

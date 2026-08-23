@@ -35,8 +35,8 @@ async fn main() -> anyhow::Result<()> {
                 .map(ModelName::new)
                 .transpose()
                 .context("invalid --model value")?;
-            let config = config::harness_config(args.harness, model);
-            let engine = wiring::engine(&args.workspace, &config);
+            let harness_config = config::harness_config(args.harness, model);
+            let engine = wiring::engine(&args.workspace, args.harness, &harness_config.config);
             let outcome = engine
                 .run(RunRequest {
                     ticket_id,
@@ -44,7 +44,9 @@ async fn main() -> anyhow::Result<()> {
                     harness: args.harness,
                     workspace: args.workspace,
                     session_override,
-                    config,
+                    model: harness_config.model,
+                    raw_event_retention: harness_config.raw_event_retention,
+                    options: harness_config.options,
                     prompt,
                 })
                 .await?;

@@ -2,21 +2,42 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use meter_core::{
-    EventContext, HarnessConfig, HarnessKind, MeterEvent, ModelName, RawEventRetention, RunMetrics,
-    SessionId, TicketId,
+    EventContext, HarnessKind, MeterEvent, ModelName, RawEventRetention, RunMetrics, SessionId,
+    TicketId,
 };
+use serde_json::{Map, Value};
 use thiserror::Error;
 use tokio::sync::mpsc;
 
 pub type EventSender = mpsc::Sender<MeterEvent>;
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct HarnessOptions {
+    values: Map<String, Value>,
+}
+
+impl HarnessOptions {
+    pub fn new(values: Map<String, Value>) -> Self {
+        Self { values }
+    }
+
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    pub fn values(&self) -> &Map<String, Value> {
+        &self.values
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct HarnessRunRequest {
     pub context: EventContext,
     pub prompt: String,
     pub session_id: Option<SessionId>,
-    pub config: HarnessConfig,
+    pub model: Option<ModelName>,
     pub raw_event_retention: RawEventRetention,
+    pub options: HarnessOptions,
 }
 
 #[derive(Debug, Clone, Default)]
