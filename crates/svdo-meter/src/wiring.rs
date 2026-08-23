@@ -105,6 +105,7 @@ mod tests {
                 work: Some("ENG-142".to_owned()),
                 label: Some("plan".to_owned()),
                 since: None,
+                ..ReportQuery::default()
             },
         )?;
 

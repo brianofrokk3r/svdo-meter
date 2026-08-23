@@ -61,11 +61,12 @@ async fn main() -> anyhow::Result<()> {
                 })
                 .transpose()
                 .context("failed to convert --last duration")?;
+            let pricing = cli::resolve_pricing(&args)?;
             let query = ReportQuery {
                 work: args.work,
                 label: args.label,
                 since,
-                pricing: cli::resolve_pricing(&args)?,
+                pricing,
             };
             let telemetry_path = wiring::default_telemetry_path(&args.workspace);
             let report = wiring::load_report(&telemetry_path, &query).with_context(|| {
