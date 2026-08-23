@@ -66,7 +66,7 @@ svdo-meter run \
 | `<PROMPT>` | Yes, unless `--prompt-file` is used | Inline prompt or work instruction forwarded to the harness. Prompts are not persisted by default. |
 | `--prompt-file <PATH>` | Yes, unless `<PROMPT>` is used | UTF-8 text file whose contents are forwarded to the harness as the prompt. Cannot be combined with an inline prompt. |
 | `--label <LABEL>` | No | Human-readable label copied to canonical run events. |
-| `--workspace <PATH>` | No | Workspace directory passed to the harness and used as the base for `.svdo/meter.jsonl`. |
+| `--workspace <PATH>` | No | Workspace directory passed to the harness and used as the base for `.svdo/meter/`. |
 | `--session <SESSION_ID>` | No | Explicit provider session/thread override for this run. |
 | `--model <MODEL>` | No | Harness-specific model configuration. For Codex this is passed as a Codex model argument. |
 
@@ -90,7 +90,7 @@ svdo-meter report ENG-142 --pricing-file pricing.json
 | Argument | Required | Description |
 |---|---:|---|
 | `<WORK>` | No | Optional work identifier. When omitted, results are grouped by work identifier. |
-| `--workspace <PATH>` | No | Workspace containing `.svdo/meter.jsonl`. Defaults to the current directory. |
+| `--workspace <PATH>` | No | Workspace containing `.svdo/meter/`. Defaults to the current directory. |
 | `--last <DURATION>` | No | Include only telemetry observed within a recent duration such as `7d`, `12h`, or `30m`. |
 | `--label <LABEL>` | No | Include only telemetry records with this label. |
 | `--format <FORMAT>` | No | Output format. Supported values: `terminal`, `json`, `csv`. Defaults to `terminal`. |
@@ -138,13 +138,13 @@ svdo-meter telemetry inspect sess-abc123 --workspace ~/code/app
 
 | Argument | Required | Description |
 |---|---:|---|
-| `--workspace <PATH>` | No | Workspace containing `.svdo/meter.jsonl`. Defaults to the current directory. |
+| `--workspace <PATH>` | No | Workspace containing `.svdo/meter/`. Defaults to the current directory. |
 | `<ID>` | Yes for `inspect` | Run identifier or provider session identifier to inspect. |
 
 Telemetry inspection reads:
 
 ```text
-<workspace>/.svdo/meter.jsonl
+<workspace>/.svdo/meter/*.jsonl
 ```
 
 Missing or empty telemetry files return clear non-error output. Malformed JSONL lines are reported with line numbers under `Diagnostics`, and valid records remain inspectable. Token-bearing events such as `usage.reported`, `run.completed`, and `run.failed` call out missing token fields when expected components are absent.
@@ -190,7 +190,7 @@ The event log remains canonical. Any local session registry is a rebuildable pro
 Default telemetry path:
 
 ```text
-<workspace>/.svdo/meter.jsonl
+<workspace>/.svdo/meter/<run-id>.jsonl
 ```
 
 If `--workspace` is omitted, the current directory is used as the base.

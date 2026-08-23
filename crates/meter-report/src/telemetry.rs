@@ -342,7 +342,7 @@ pub fn render_sessions(inspection: &TelemetryInspection) -> String {
     let sessions = inspection.session_summaries();
     if sessions.is_empty() {
         return diagnostics_suffix(
-            "SVDO Telemetry Sessions\n\nNo sessions found in .svdo/meter.jsonl.",
+            "SVDO Telemetry Sessions\n\nNo sessions found in .svdo/meter/.",
             &inspection.diagnostics,
         );
     }
@@ -368,7 +368,7 @@ pub fn render_runs(inspection: &TelemetryInspection) -> String {
     let runs = inspection.run_summaries();
     if runs.is_empty() {
         return diagnostics_suffix(
-            "SVDO Telemetry Runs\n\nNo runs found in .svdo/meter.jsonl.",
+            "SVDO Telemetry Runs\n\nNo runs found in .svdo/meter/.",
             &inspection.diagnostics,
         );
     }
