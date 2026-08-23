@@ -11,7 +11,8 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 
 use crate::{
-    EventStore, HarnessAdapter, HarnessError, HarnessOptions, HarnessRunRequest, StoreError,
+    EventBus, EventStore, EventStoreSink, HarnessAdapter, HarnessError, HarnessOptions,
+    HarnessRunRequest, StoreError,
 };
 
 #[derive(Debug, Clone)]
@@ -42,21 +43,31 @@ pub enum RunError {
     MissingAdapter(HarnessKind),
     #[error("event store error")]
     Store(#[from] StoreError),
+    #[error("event sink error")]
+    Sink(#[from] crate::EventBusError),
     #[error("event writer task failed")]
     WriterJoin(#[source] tokio::task::JoinError),
 }
 
 pub struct RunEngine {
     store: Arc<dyn EventStore>,
+    event_bus: EventBus,
     adapters: HashMap<HarnessKind, Arc<dyn HarnessAdapter>>,
 }
 
 impl RunEngine {
     pub fn new(store: Arc<dyn EventStore>) -> Self {
+        let event_bus = EventBus::default().with_sink(Arc::new(EventStoreSink::new(store.clone())));
         Self {
             store,
+            event_bus,
             adapters: HashMap::new(),
         }
+    }
+
+    pub fn with_event_sink(mut self, sink: Arc<dyn crate::EventSink>) -> Self {
+        self.event_bus = self.event_bus.with_sink(sink);
+        self
     }
 
     pub fn with_adapter(mut self, adapter: Arc<dyn HarnessAdapter>) -> Self {
@@ -99,7 +110,7 @@ impl RunEngine {
                 prompt_recorded: false,
             }),
         );
-        self.store.append(&start_event).await?;
+        self.event_bus.emit(&start_event).await?;
         if request.session_override.is_some() {
             let override_event = MeterEvent::new(
                 base_context.clone(),
@@ -107,16 +118,16 @@ impl RunEngine {
                     source: "user_override".to_owned(),
                 }),
             );
-            self.store.append(&override_event).await?;
+            self.event_bus.emit(&override_event).await?;
         }
 
         let (tx, mut rx) = mpsc::channel::<MeterEvent>(256);
-        let store = Arc::clone(&self.store);
+        let event_bus = self.event_bus.clone();
         let writer = tokio::spawn(async move {
             while let Some(event) = rx.recv().await {
-                store.append(&event).await?;
+                event_bus.emit(&event).await?;
             }
-            Ok::<(), StoreError>(())
+            Ok::<(), crate::EventBusError>(())
         });
 
         let started = Instant::now();
@@ -236,7 +247,10 @@ mod tests {
     };
 
     use super::*;
-    use crate::{EventQuery, EventSender, EventStore, HarnessCapabilities, HarnessRunResult};
+    use crate::{
+        EventQuery, EventSender, EventSink, EventStore, HarnessCapabilities, HarnessRunResult,
+        SinkError,
+    };
 
     #[derive(Debug, Default)]
     struct MemoryStore {
@@ -281,6 +295,31 @@ mod tests {
         observed_models: Arc<Mutex<Vec<Option<ModelName>>>>,
         observed_retention: Arc<Mutex<Vec<RawEventRetention>>>,
         result: HarnessRunResult,
+    }
+
+    #[derive(Default)]
+    struct RecordingSink {
+        events: Mutex<Vec<MeterEvent>>,
+    }
+
+    #[async_trait]
+    impl EventSink for RecordingSink {
+        async fn emit(&self, event: &MeterEvent) -> Result<(), SinkError> {
+            self.events
+                .lock()
+                .unwrap_or_else(|err| panic!("{err}"))
+                .push(event.clone());
+            Ok(())
+        }
+    }
+
+    struct FailingSink;
+
+    #[async_trait]
+    impl EventSink for FailingSink {
+        async fn emit(&self, _event: &MeterEvent) -> Result<(), SinkError> {
+            Err(SinkError::Message("fixture sink failed".to_owned()))
+        }
     }
 
     #[async_trait]
@@ -393,6 +432,81 @@ mod tests {
                 EventType::RunCompleted,
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn extra_sink_does_not_replace_default_store_sink() {
+        let store = Arc::new(MemoryStore::default());
+        let live_sink = Arc::new(RecordingSink::default());
+        let adapter = Arc::new(FakeAdapter {
+            observed_sessions: Arc::new(Mutex::new(Vec::new())),
+            observed_models: Arc::new(Mutex::new(Vec::new())),
+            observed_retention: Arc::new(Mutex::new(Vec::new())),
+            result: HarnessRunResult {
+                success: true,
+                ..HarnessRunResult::default()
+            },
+        });
+        let engine = RunEngine::new(store.clone())
+            .with_event_sink(live_sink.clone())
+            .with_adapter(adapter);
+
+        let _ = engine
+            .run(run_request("ENG-SINKS", None))
+            .await
+            .unwrap_or_else(|err| panic!("{err}"));
+
+        let stored = store
+            .stream(EventQuery::default())
+            .await
+            .unwrap_or_else(|err| panic!("{err}"));
+        let live = live_sink
+            .events
+            .lock()
+            .unwrap_or_else(|err| panic!("{err}"))
+            .clone();
+        assert_eq!(stored, live);
+        assert!(
+            stored
+                .iter()
+                .any(|event| event.event_type == EventType::RunStarted)
+        );
+        assert!(
+            stored
+                .iter()
+                .any(|event| event.event_type == EventType::RunCompleted)
+        );
+    }
+
+    #[tokio::test]
+    async fn sink_failure_fails_run_command() {
+        let store = Arc::new(MemoryStore::default());
+        let adapter = Arc::new(FakeAdapter {
+            observed_sessions: Arc::new(Mutex::new(Vec::new())),
+            observed_models: Arc::new(Mutex::new(Vec::new())),
+            observed_retention: Arc::new(Mutex::new(Vec::new())),
+            result: HarnessRunResult {
+                success: true,
+                ..HarnessRunResult::default()
+            },
+        });
+        let engine = RunEngine::new(store.clone())
+            .with_event_sink(Arc::new(FailingSink))
+            .with_adapter(adapter);
+
+        let error = engine
+            .run(run_request("ENG-SINK-FAIL", None))
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("expected sink error"));
+
+        assert!(matches!(error, RunError::Sink(_)));
+        let stored = store
+            .stream(EventQuery::default())
+            .await
+            .unwrap_or_else(|err| panic!("{err}"));
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].event_type, EventType::RunStarted);
     }
 
     #[tokio::test]

@@ -98,6 +98,23 @@ pub enum StoreError {
     Json(#[from] serde_json::Error),
 }
 
+#[derive(Debug, Error)]
+pub enum SinkError {
+    #[error("event sink I/O failure")]
+    Io(#[from] std::io::Error),
+    #[error("event sink serialization failure")]
+    Json(#[from] serde_json::Error),
+    #[error("event sink store failure")]
+    Store(#[from] StoreError),
+    #[error("event sink failure: {0}")]
+    Message(String),
+}
+
+#[async_trait]
+pub trait EventSink: Send + Sync {
+    async fn emit(&self, event: &MeterEvent) -> Result<(), SinkError>;
+}
+
 #[async_trait]
 pub trait EventStore: Send + Sync {
     async fn append(&self, event: &MeterEvent) -> Result<(), StoreError>;

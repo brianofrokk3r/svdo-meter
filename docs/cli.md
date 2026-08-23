@@ -46,6 +46,17 @@ svdo-meter run \
   "Implement the password reset flow described in ENG-142"
 ```
 
+Emit the same canonical events to stdout as newline-delimited JSON while preserving durable local telemetry:
+
+```bash
+svdo-meter run \
+  --ticket ENG-142 \
+  --harness codex \
+  --workspace ~/code/app \
+  --emit ndjson \
+  "Implement ENG-142" | my-company-ingester
+```
+
 Prompt-file form:
 
 ```bash
@@ -69,8 +80,26 @@ svdo-meter run \
 | `--workspace <PATH>` | No | Workspace directory passed to the harness and used as the base for `.svdo/meter/`. |
 | `--session <SESSION_ID>` | No | Explicit provider session/thread override for this run. |
 | `--model <MODEL>` | No | Harness-specific model configuration. For Codex this is passed as a Codex model argument. |
+| `--sink <SINK>` | No | Event output sink. Repeatable. Supported values: `jsonl`, `stdout`. Durable `jsonl` telemetry remains enabled by default. |
+| `--emit <FORMAT>` | No | Convenience event stream format. Supported value: `ndjson`, equivalent to enabling the stdout sink. |
 
 SVDO Meter reads `--prompt-file` before starting the harness. Missing, unreadable, or non-UTF-8 files fail fast with a path-aware CLI error.
+
+### Event Output Sinks
+
+`svdo-meter run` always writes durable per-run JSONL telemetry under `.svdo/meter/` unless a future explicit disable option is added and documented.
+
+Sink selection rules:
+
+| Selection | Behavior |
+|---|---|
+| No sink flags | Write durable JSONL only. |
+| `--sink jsonl` | Explicitly select durable JSONL only. |
+| `--sink stdout` | Write durable JSONL and emit one NDJSON event per stdout line. |
+| `--emit ndjson` | Write durable JSONL and emit one NDJSON event per stdout line. |
+| `--sink stdout --emit ndjson` | Write durable JSONL and emit one stdout NDJSON stream, not duplicate stdout records. |
+
+Unsupported sink names such as `otel`, `http`, or custom connector names are rejected during CLI parsing. Sink emit failures fail the run command; the event bus attempts every selected sink for the event before returning the first sink error.
 
 ## `svdo-meter report`
 
@@ -194,6 +223,8 @@ Default telemetry path:
 ```
 
 If `--workspace` is omitted, the current directory is used as the base.
+
+This durable JSONL sink remains active when stdout event streaming is enabled.
 
 Each JSONL line is one canonical event with common metadata such as:
 

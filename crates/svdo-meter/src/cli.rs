@@ -72,6 +72,14 @@ pub struct RunArgs {
         conflicts_with = "prompt_file"
     )]
     pub prompt: Option<String>,
+
+    /// Event output sink. Repeat to select multiple sinks. Supported: jsonl, stdout.
+    #[arg(long = "sink", value_name = "SINK")]
+    pub sinks: Vec<RunSink>,
+
+    /// Emit live events in a pipe-friendly format. Supported: ndjson.
+    #[arg(long, value_name = "FORMAT")]
+    pub emit: Option<EmitFormat>,
 }
 
 #[derive(Debug, Args)]
@@ -132,6 +140,62 @@ pub enum ReportFormat {
     Terminal,
     Json,
     Csv,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunSink {
+    Jsonl,
+    Stdout,
+}
+
+impl std::fmt::Display for RunSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
+            Self::Jsonl => "jsonl",
+            Self::Stdout => "stdout",
+        };
+        f.write_str(value)
+    }
+}
+
+impl FromStr for RunSink {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "jsonl" => Ok(Self::Jsonl),
+            "stdout" => Ok(Self::Stdout),
+            other => Err(format!(
+                "unsupported event sink `{other}`; expected jsonl or stdout"
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmitFormat {
+    Ndjson,
+}
+
+impl std::fmt::Display for EmitFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ndjson => f.write_str("ndjson"),
+        }
+    }
+}
+
+impl FromStr for EmitFormat {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "ndjson" => Ok(Self::Ndjson),
+            other => Err(format!(
+                "unsupported emit format `{other}`; expected ndjson"
+            )),
+        }
+    }
 }
 
 impl std::fmt::Display for ReportFormat {
@@ -233,7 +297,10 @@ mod tests {
     use clap::{CommandFactory, Parser, error::ErrorKind};
     use meter_core::HarnessKind;
 
-    use super::{Cli, Commands, ReportFormat, TelemetryCommands, resolve_pricing, resolve_prompt};
+    use super::{
+        Cli, Commands, EmitFormat, ReportFormat, RunSink, TelemetryCommands, resolve_pricing,
+        resolve_prompt,
+    };
 
     #[test]
     fn parses_run_with_inline_prompt_and_all_optional_flags() -> anyhow::Result<()> {
@@ -269,8 +336,72 @@ mod tests {
         );
         assert_eq!(args.session.as_deref(), Some("sess-123"));
         assert_eq!(args.model.as_deref(), Some("gpt-5"));
+        assert!(args.sinks.is_empty());
+        assert_eq!(args.emit, None);
         assert_eq!(resolve_prompt(&args)?, "Do work");
         Ok(())
+    }
+
+    #[test]
+    fn parses_run_event_sinks_and_emit_format() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "run",
+            "--ticket",
+            "ENG-142",
+            "--harness",
+            "codex",
+            "--sink",
+            "jsonl",
+            "--sink",
+            "stdout",
+            "--emit",
+            "ndjson",
+            "Do work",
+        ])?;
+        let args = match cli.command {
+            Commands::Run(args) => args,
+            Commands::Report(_) => panic!("expected run command"),
+            Commands::Telemetry(_) => panic!("expected run command"),
+        };
+
+        assert_eq!(args.sinks, vec![RunSink::Jsonl, RunSink::Stdout]);
+        assert_eq!(args.emit, Some(EmitFormat::Ndjson));
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_unsupported_run_sink() {
+        let result = Cli::try_parse_from([
+            "svdo-meter",
+            "run",
+            "--ticket",
+            "ENG-142",
+            "--harness",
+            "codex",
+            "--sink",
+            "otel",
+            "Do work",
+        ]);
+
+        assert_eq!(parse_error_kind(result), ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn rejects_unsupported_emit_format() {
+        let result = Cli::try_parse_from([
+            "svdo-meter",
+            "run",
+            "--ticket",
+            "ENG-142",
+            "--harness",
+            "codex",
+            "--emit",
+            "json",
+            "Do work",
+        ]);
+
+        assert_eq!(parse_error_kind(result), ErrorKind::ValueValidation);
     }
 
     #[test]

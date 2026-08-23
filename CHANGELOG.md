@@ -2,6 +2,9 @@
 
 ## 2026-08-23
 
+- Added live event sink selection for `svdo-meter run` with `--sink jsonl`, `--sink stdout`, and `--emit ndjson`.
+- Added stdout NDJSON event streaming while preserving default durable per-run JSONL telemetry under `.svdo/meter/`.
+- Added sink fan-out and failure behavior tests for normalized `MeterEvent` output.
 - Added per-run telemetry JSONL streams under `.svdo/meter/` so concurrent `svdo-meter run` processes do not append to the same file.
 - Updated telemetry replay, reports, and inspection commands to aggregate all `.svdo/meter/*.jsonl` streams.
 - Updated CLI help and empty telemetry messages for the directory-backed telemetry store.

@@ -275,9 +275,20 @@ Suggested inputs:
 --workspace    optional
 --session      optional
 --model        optional / harness-specific
+--sink         optional / repeatable event output sink
+--emit         optional live event stream format
 ```
 
 Additional harness-specific arguments can later be namespaced or passed through.
+
+Supported run event sinks:
+
+```text
+jsonl   durable local JSONL telemetry
+stdout  live newline-delimited JSON events
+```
+
+Durable JSONL remains enabled by default. `--emit ndjson` is a convenience form for enabling the stdout NDJSON sink, and combining it with `--sink stdout` should not duplicate stdout events.
 
 For example:
 
@@ -614,7 +625,9 @@ Harness Adapter
 Canonical Meter Event
      │
      ▼
-Append-only JSONL
+Event Bus
+     ├── Append-only JSONL
+     └── stdout NDJSON
 ```
 
 The log should contain enough information to:
@@ -634,7 +647,8 @@ The default storage format should be append-only JSON Lines:
 
 ```text
 .svdo/
-└── meter.jsonl
+└── meter/
+    └── <run-id>.jsonl
 ```
 
 JSONL is useful because it is:
@@ -650,6 +664,8 @@ JSONL is useful because it is:
 - easy to ingest into log/observability systems
 
 Each line should represent one immutable event.
+
+Live sinks should receive the same normalized event records as durable storage. Sink failures should have explicit command behavior; the first implemented policy is strict failure after attempting every configured sink for the event.
 
 ---
 
