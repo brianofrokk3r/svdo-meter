@@ -685,38 +685,26 @@ mod tests {
     fn filters_by_label_and_since() {
         let report = report_from_jsonl_lines(
             [
-                terminal_event_at(
-                    EVENT_1,
-                    RUN_1,
-                    Some("ENG-1"),
-                    Some("plan"),
-                    "2026-08-10T00:00:00Z",
-                    1_000,
-                    1,
-                    2,
-                    3,
+                terminal_event(
+                    TerminalEvent::new(EVENT_1, RUN_1, "2026-08-10T00:00:00Z")
+                        .ticket_id("ENG-1")
+                        .label("plan")
+                        .wall_time_ms(1_000)
+                        .tokens(1, 2, 3),
                 ),
-                terminal_event_at(
-                    EVENT_2,
-                    RUN_2,
-                    Some("ENG-2"),
-                    Some("build"),
-                    "2026-08-20T00:00:00Z",
-                    1_000,
-                    4,
-                    5,
-                    6,
+                terminal_event(
+                    TerminalEvent::new(EVENT_2, RUN_2, "2026-08-20T00:00:00Z")
+                        .ticket_id("ENG-2")
+                        .label("build")
+                        .wall_time_ms(1_000)
+                        .tokens(4, 5, 6),
                 ),
-                terminal_event_at(
-                    EVENT_3,
-                    RUN_2,
-                    Some("ENG-3"),
-                    Some("plan"),
-                    "2026-08-21T00:00:00Z",
-                    1_000,
-                    7,
-                    8,
-                    9,
+                terminal_event(
+                    TerminalEvent::new(EVENT_3, RUN_2, "2026-08-21T00:00:00Z")
+                        .ticket_id("ENG-3")
+                        .label("plan")
+                        .wall_time_ms(1_000)
+                        .tokens(7, 8, 9),
                 ),
             ],
             &ReportQuery {
@@ -752,17 +740,12 @@ mod tests {
     #[test]
     fn estimates_cost_with_all_pricing_categories_for_configured_model() {
         let report = report_from_jsonl_lines(
-            [terminal_event_at_model(
-                EVENT_1,
-                RUN_1,
-                Some("ENG-1"),
-                None,
-                "2026-08-21T12:00:00Z",
-                1_000,
-                1_000_000,
-                3_000_000,
-                2_000_000,
-                Some("gpt-5"),
+            [terminal_event(
+                TerminalEvent::new(EVENT_1, RUN_1, "2026-08-21T12:00:00Z")
+                    .ticket_id("ENG-1")
+                    .wall_time_ms(1_000)
+                    .tokens(1_000_000, 3_000_000, 2_000_000)
+                    .model("gpt-5"),
             )],
             &ReportQuery {
                 pricing: Some(pricing_config([("gpt-5", Some(1.0), Some(0.5), Some(2.0))])),
@@ -789,29 +772,19 @@ mod tests {
     fn estimates_cost_for_multiple_configured_models_with_different_rates() {
         let report = report_from_jsonl_lines(
             [
-                terminal_event_at_model(
-                    EVENT_1,
-                    RUN_1,
-                    Some("ENG-1"),
-                    None,
-                    "2026-08-21T12:00:00Z",
-                    1_000,
-                    1_000_000,
-                    1_000_000,
-                    1_000_000,
-                    Some("gpt-5"),
+                terminal_event(
+                    TerminalEvent::new(EVENT_1, RUN_1, "2026-08-21T12:00:00Z")
+                        .ticket_id("ENG-1")
+                        .wall_time_ms(1_000)
+                        .tokens(1_000_000, 1_000_000, 1_000_000)
+                        .model("gpt-5"),
                 ),
-                terminal_event_at_model(
-                    EVENT_2,
-                    RUN_2,
-                    Some("ENG-1"),
-                    None,
-                    "2026-08-21T12:01:00Z",
-                    1_000,
-                    1_000_000,
-                    1_000_000,
-                    1_000_000,
-                    Some("gpt-5-mini"),
+                terminal_event(
+                    TerminalEvent::new(EVENT_2, RUN_2, "2026-08-21T12:01:00Z")
+                        .ticket_id("ENG-1")
+                        .wall_time_ms(1_000)
+                        .tokens(1_000_000, 1_000_000, 1_000_000)
+                        .model("gpt-5-mini"),
                 ),
             ],
             &ReportQuery {
@@ -840,17 +813,12 @@ mod tests {
     #[test]
     fn marks_unconfigured_model_pricing_unavailable() {
         let report = report_from_jsonl_lines(
-            [terminal_event_at_model(
-                EVENT_1,
-                RUN_1,
-                Some("ENG-1"),
-                None,
-                "2026-08-21T12:00:00Z",
-                1_000,
-                1_000_000,
-                1_000_000,
-                1_000_000,
-                Some("unpriced-model"),
+            [terminal_event(
+                TerminalEvent::new(EVENT_1, RUN_1, "2026-08-21T12:00:00Z")
+                    .ticket_id("ENG-1")
+                    .wall_time_ms(1_000)
+                    .tokens(1_000_000, 1_000_000, 1_000_000)
+                    .model("unpriced-model"),
             )],
             &ReportQuery {
                 pricing: Some(pricing_config([("gpt-5", Some(1.0), Some(2.0), Some(3.0))])),
@@ -895,57 +863,78 @@ mod tests {
         );
     }
 
-    fn terminal_event_at(
-        event_id: &str,
-        run_id: &str,
-        ticket_id: Option<&str>,
-        label: Option<&str>,
-        occurred_at: &str,
+    struct TerminalEvent<'a> {
+        event_id: &'a str,
+        run_id: &'a str,
+        ticket_id: Option<&'a str>,
+        label: Option<&'a str>,
+        occurred_at: &'a str,
         wall_time_ms: u64,
         input: u64,
         output: u64,
         cache: u64,
-    ) -> String {
-        terminal_event_at_model(
-            event_id,
-            run_id,
-            ticket_id,
-            label,
-            occurred_at,
-            wall_time_ms,
-            input,
-            output,
-            cache,
-            None,
-        )
+        model: Option<&'a str>,
     }
 
-    fn terminal_event_at_model(
-        event_id: &str,
-        run_id: &str,
-        ticket_id: Option<&str>,
-        label: Option<&str>,
-        occurred_at: &str,
-        wall_time_ms: u64,
-        input: u64,
-        output: u64,
-        cache: u64,
-        model: Option<&str>,
-    ) -> String {
+    impl<'a> TerminalEvent<'a> {
+        fn new(event_id: &'a str, run_id: &'a str, occurred_at: &'a str) -> Self {
+            Self {
+                event_id,
+                run_id,
+                ticket_id: None,
+                label: None,
+                occurred_at,
+                wall_time_ms: 0,
+                input: 0,
+                output: 0,
+                cache: 0,
+                model: None,
+            }
+        }
+
+        fn ticket_id(mut self, ticket_id: &'a str) -> Self {
+            self.ticket_id = Some(ticket_id);
+            self
+        }
+
+        fn label(mut self, label: &'a str) -> Self {
+            self.label = Some(label);
+            self
+        }
+
+        fn wall_time_ms(mut self, wall_time_ms: u64) -> Self {
+            self.wall_time_ms = wall_time_ms;
+            self
+        }
+
+        fn tokens(mut self, input: u64, output: u64, cache: u64) -> Self {
+            self.input = input;
+            self.output = output;
+            self.cache = cache;
+            self
+        }
+
+        fn model(mut self, model: &'a str) -> Self {
+            self.model = Some(model);
+            self
+        }
+    }
+
+    fn terminal_event(fixture: TerminalEvent<'_>) -> String {
         let mut event = json!({
             "schema_version": 1,
-            "event_id": event_id,
+            "event_id": fixture.event_id,
             "event_type": "run.completed",
-            "occurred_at": occurred_at,
-            "observed_at": occurred_at,
-            "run_id": run_id,
+            "occurred_at": fixture.occurred_at,
+            "observed_at": fixture.occurred_at,
+            "run_id": fixture.run_id,
             "harness": "codex",
             "session_id": "sess-1",
             "payload": {
                 "type": "run_completed",
                 "data": {
                     "metrics": {
-                        "wall_time_ms": wall_time_ms,
+                        "wall_time_ms": fixture.wall_time_ms,
                         "active_time_ms": 0,
                         "command_time_ms": 0,
                         "tool_time_ms": 0,
@@ -957,22 +946,22 @@ mod tests {
                         "tool_calls": 0,
                         "errors": 0,
                         "token_usage": {
-                            "input_tokens": input,
-                            "cached_input_tokens": cache,
-                            "output_tokens": output
+                            "input_tokens": fixture.input,
+                            "cached_input_tokens": fixture.cache,
+                            "output_tokens": fixture.output
                         }
                     },
                     "exit_code": 0
                 }
             }
         });
-        if let Some(ticket_id) = ticket_id {
+        if let Some(ticket_id) = fixture.ticket_id {
             event["ticket_id"] = json!(ticket_id);
         }
-        if let Some(label) = label {
+        if let Some(label) = fixture.label {
             event["label"] = json!(label);
         }
-        if let Some(model) = model {
+        if let Some(model) = fixture.model {
             event["resolved_model"] = json!(model);
         }
         event.to_string()
