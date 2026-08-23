@@ -22,6 +22,7 @@ The CLI is built with Clap, so command help is available from the binary:
 ```bash
 svdo-meter --help
 svdo-meter run --help
+svdo-meter report --help
 svdo-meter telemetry --help
 ```
 
@@ -30,6 +31,7 @@ If running from source:
 ```bash
 cargo run -p svdo-meter -- --help
 cargo run -p svdo-meter -- run --help
+cargo run -p svdo-meter -- report --help
 cargo run -p svdo-meter -- telemetry --help
 ```
 
@@ -52,6 +54,7 @@ Run it from the build output:
 ```bash
 ./target/debug/svdo-meter --help
 ./target/debug/svdo-meter run --help
+./target/debug/svdo-meter report --help
 ./target/debug/svdo-meter telemetry --help
 ```
 
@@ -135,6 +138,16 @@ svdo-meter run \
   --workspace . \
   "Implement ENG-142"
 ```
+
+## Estimate Token Cost
+
+`svdo-meter report` can estimate local token cost from a UTF-8 JSON pricing file supplied through the CLI. Rates are cost per 1,000,000 tokens and are keyed by exact model identifier:
+
+```bash
+svdo-meter report ENG-142 --pricing-file pricing.json
+```
+
+When telemetry references a model that is not present in the pricing JSON, the report marks that model's cost as unavailable instead of using a default price.
 
 ## Telemetry
 

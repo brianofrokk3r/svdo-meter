@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 use meter_core::HarnessKind;
+use meter_report::PricingConfig;
 
 #[derive(Debug, Parser)]
 #[command(name = "svdo-meter")]
@@ -24,7 +25,7 @@ pub enum Commands {
     Run(RunArgs),
     #[command(about = "Generate a local SVDO Trace report from JSONL telemetry")]
     #[command(
-        after_help = "Examples:\n  svdo-meter report ENG-142\n  svdo-meter report --last 7d\n  svdo-meter report --label plan\n  svdo-meter report ENG-142 --format json\n  svdo-meter report --last 7d --format csv\n\nReports read .svdo/meter.jsonl under --workspace or the current directory. Without WORK, output is grouped by work identifier; records without one are shown as Unknown. Token output preserves input, output, cache, and total fields, with missing components shown distinctly from zero."
+        after_help = "Examples:\n  svdo-meter report ENG-142\n  svdo-meter report --last 7d\n  svdo-meter report --label plan\n  svdo-meter report ENG-142 --format json\n  svdo-meter report --last 7d --format csv\n  svdo-meter report --pricing-file pricing.json\n\nReports read .svdo/meter.jsonl under --workspace or the current directory. Without WORK, output is grouped by work identifier; records without one are shown as Unknown. Token output preserves input, output, cache, and total fields, with missing components shown distinctly from zero. Pricing rates are specified as cost per 1,000,000 tokens."
     )]
     Report(ReportArgs),
     #[command(about = "Inspect local SVDO Meter telemetry")]
@@ -94,6 +95,10 @@ pub struct ReportArgs {
     /// Output format for the report.
     #[arg(long, default_value_t = ReportFormat::Terminal)]
     pub format: ReportFormat,
+
+    /// Read a JSON model pricing map from a UTF-8 file. Rates are per 1,000,000 tokens.
+    #[arg(long, value_name = "PATH")]
+    pub pricing_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -205,25 +210,48 @@ pub fn resolve_prompt(args: &RunArgs) -> anyhow::Result<String> {
     unreachable!("clap requires either an inline prompt or --prompt-file")
 }
 
+pub fn resolve_pricing(args: &ReportArgs) -> anyhow::Result<Option<PricingConfig>> {
+    if let Some(path) = &args.pricing_file {
+        let value = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read pricing file `{}`", path.display()))?;
+        return serde_json::from_str(&value).with_context(|| {
+            format!(
+                "failed to parse pricing file `{}` as a model pricing map keyed by model identifier",
+                path.display()
+            )
+        }).map(Some);
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use anyhow::Context;
-    use clap::{CommandFactory, Parser};
+    use clap::{CommandFactory, Parser, error::ErrorKind};
+    use meter_core::HarnessKind;
 
-    use super::{Cli, Commands, ReportFormat, TelemetryCommands, resolve_prompt};
+    use super::{Cli, Commands, ReportFormat, TelemetryCommands, resolve_pricing, resolve_prompt};
 
     #[test]
-    fn resolves_inline_prompt() -> anyhow::Result<()> {
+    fn parses_run_with_inline_prompt_and_all_optional_flags() -> anyhow::Result<()> {
         let cli = Cli::try_parse_from([
             "svdo-meter",
             "run",
             "--ticket",
             "ENG-142",
+            "--label",
+            "Implement auth",
             "--harness",
             "codex",
+            "--workspace",
+            "/tmp/workspace",
+            "--session",
+            "sess-123",
+            "--model",
+            "gpt-5",
             "Do work",
         ])?;
         let args = match cli.command {
@@ -232,6 +260,15 @@ mod tests {
             Commands::Telemetry(_) => panic!("expected run command"),
         };
 
+        assert_eq!(args.ticket, "ENG-142");
+        assert_eq!(args.label.as_deref(), Some("Implement auth"));
+        assert_eq!(args.harness, HarnessKind::Codex);
+        assert_eq!(
+            args.workspace.as_deref(),
+            Some(std::path::Path::new("/tmp/workspace"))
+        );
+        assert_eq!(args.session.as_deref(), Some("sess-123"));
+        assert_eq!(args.model.as_deref(), Some("gpt-5"));
         assert_eq!(resolve_prompt(&args)?, "Do work");
         Ok(())
     }
@@ -326,6 +363,59 @@ mod tests {
     }
 
     #[test]
+    fn rejects_missing_run_ticket() {
+        let result = Cli::try_parse_from(["svdo-meter", "run", "--harness", "codex", "Do work"]);
+
+        assert_eq!(parse_error_kind(result), ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn rejects_missing_run_harness() {
+        let result = Cli::try_parse_from(["svdo-meter", "run", "--ticket", "ENG-142", "Do work"]);
+
+        assert_eq!(parse_error_kind(result), ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn rejects_invalid_harness() {
+        let result = Cli::try_parse_from([
+            "svdo-meter",
+            "run",
+            "--ticket",
+            "ENG-142",
+            "--harness",
+            "unknown",
+            "Do work",
+        ]);
+
+        assert_eq!(parse_error_kind(result), ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn parses_report_default_terminal_format_and_workspace() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "report",
+            "ENG-142",
+            "--workspace",
+            "/tmp/workspace",
+        ])?;
+        let args = match cli.command {
+            Commands::Report(args) => args,
+            Commands::Run(_) => panic!("expected report command"),
+            Commands::Telemetry(_) => panic!("expected report command"),
+        };
+
+        assert_eq!(args.work.as_deref(), Some("ENG-142"));
+        assert_eq!(
+            args.workspace.as_deref(),
+            Some(std::path::Path::new("/tmp/workspace"))
+        );
+        assert_eq!(args.format, ReportFormat::Terminal);
+        Ok(())
+    }
+
+    #[test]
     fn parses_report_work_and_json_format() -> anyhow::Result<()> {
         let cli = Cli::try_parse_from(["svdo-meter", "report", "ENG-142", "--format", "json"])?;
         let args = match cli.command {
@@ -336,6 +426,20 @@ mod tests {
 
         assert_eq!(args.work.as_deref(), Some("ENG-142"));
         assert_eq!(args.format, ReportFormat::Json);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_report_csv_format() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["svdo-meter", "report", "--format", "csv"])?;
+        let args = match cli.command {
+            Commands::Report(args) => args,
+            Commands::Run(_) => panic!("expected report command"),
+            Commands::Telemetry(_) => panic!("expected report command"),
+        };
+
+        assert_eq!(args.work, None);
+        assert_eq!(args.format, ReportFormat::Csv);
         Ok(())
     }
 
@@ -358,6 +462,56 @@ mod tests {
     }
 
     #[test]
+    fn resolves_report_pricing_file_contents() -> anyhow::Result<()> {
+        let path = unique_temp_path("svdo-meter-pricing.json");
+        fs::write(
+            &path,
+            r#"{"gpt-5-mini":{"input_per_million":0.25,"cached_input_per_million":0.025,"output_per_million":2.0}}"#,
+        )?;
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "report",
+            "--pricing-file",
+            path.to_str()
+                .context("temporary pricing path must be UTF-8")?,
+        ])?;
+        let args = match cli.command {
+            Commands::Report(args) => args,
+            Commands::Run(_) => panic!("expected report command"),
+            Commands::Telemetry(_) => panic!("expected report command"),
+        };
+
+        let pricing = resolve_pricing(&args)?.context("expected pricing")?;
+        let model = pricing
+            .get("gpt-5-mini")
+            .context("expected gpt-5-mini pricing")?;
+        assert_eq!(model.input_per_million, Some(0.25));
+        assert_eq!(model.cached_input_per_million, Some(0.025));
+        assert_eq!(model.output_per_million, Some(2.0));
+        fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn report_help_documents_pricing_unit() {
+        let mut command = Cli::command();
+        let report = command
+            .find_subcommand_mut("report")
+            .expect("report subcommand exists");
+        let help = report.render_help().to_string();
+
+        assert!(help.contains("--pricing-file"));
+        assert!(help.contains("per 1,000,000 tokens"));
+    }
+
+    #[test]
+    fn rejects_inline_pricing_json_option() {
+        let result = Cli::try_parse_from(["svdo-meter", "report", "--pricing-json", "{}"]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn rejects_invalid_report_format() {
         let result = Cli::try_parse_from(["svdo-meter", "report", "--format", "yaml"]);
 
@@ -365,16 +519,51 @@ mod tests {
     }
 
     #[test]
-    fn parses_telemetry_subcommands() -> anyhow::Result<()> {
-        let cli = Cli::try_parse_from(["svdo-meter", "telemetry", "sessions"])?;
+    fn rejects_invalid_report_durations() {
+        for value in ["", "0d", "seven-days", "7w"] {
+            let result = Cli::try_parse_from(["svdo-meter", "report", "--last", value]);
+
+            assert!(result.is_err(), "expected `{value}` to be rejected");
+        }
+    }
+
+    #[test]
+    fn parses_telemetry_sessions_with_workspace() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "telemetry",
+            "sessions",
+            "--workspace",
+            "/tmp/workspace",
+        ])?;
         match cli.command {
             Commands::Telemetry(args) => match args.command {
-                TelemetryCommands::Sessions => {}
+                TelemetryCommands::Sessions => assert_eq!(
+                    args.workspace.as_deref(),
+                    Some(std::path::Path::new("/tmp/workspace"))
+                ),
                 _ => panic!("expected sessions command"),
             },
             _ => panic!("expected telemetry command"),
         }
+        Ok(())
+    }
 
+    #[test]
+    fn parses_telemetry_runs() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["svdo-meter", "telemetry", "runs"])?;
+        match cli.command {
+            Commands::Telemetry(args) => match args.command {
+                TelemetryCommands::Runs => assert_eq!(args.workspace, None),
+                _ => panic!("expected runs command"),
+            },
+            _ => panic!("expected telemetry command"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parses_telemetry_inspect_id() -> anyhow::Result<()> {
         let cli = Cli::try_parse_from(["svdo-meter", "telemetry", "inspect", "sess-1"])?;
         match cli.command {
             Commands::Telemetry(args) => match args.command {
@@ -387,11 +576,92 @@ mod tests {
     }
 
     #[test]
-    fn help_documents_telemetry_group() {
+    fn rejects_missing_top_level_command() {
+        let result = Cli::try_parse_from(["svdo-meter"]);
+
+        assert_eq!(
+            parse_error_kind(result),
+            ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_top_level_command() {
+        let result = Cli::try_parse_from(["svdo-meter", "export"]);
+
+        assert_eq!(parse_error_kind(result), ErrorKind::InvalidSubcommand);
+    }
+
+    #[test]
+    fn rejects_missing_telemetry_subcommand() {
+        let result = Cli::try_parse_from(["svdo-meter", "telemetry"]);
+
+        assert_eq!(
+            parse_error_kind(result),
+            ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_telemetry_subcommand() {
+        let result = Cli::try_parse_from(["svdo-meter", "telemetry", "unknown"]);
+
+        assert_eq!(parse_error_kind(result), ErrorKind::InvalidSubcommand);
+    }
+
+    #[test]
+    fn rejects_missing_telemetry_inspect_id() {
+        let result = Cli::try_parse_from(["svdo-meter", "telemetry", "inspect"]);
+
+        assert_eq!(parse_error_kind(result), ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn help_documents_current_command_wiring() {
         let help = Cli::command().render_help().to_string();
 
+        assert!(help.contains("run"));
+        assert!(help.contains("report"));
         assert!(help.contains("telemetry"));
+        assert!(help.contains("Run measured agent CLI work"));
+        assert!(help.contains("Generate a local SVDO Trace report"));
         assert!(help.contains("Inspect local SVDO Meter telemetry"));
+    }
+
+    #[test]
+    fn command_help_documents_nested_paths() {
+        assert_help_contains(["svdo-meter", "run", "--help"], "svdo-meter run --ticket");
+        assert_help_contains(
+            ["svdo-meter", "report", "--help"],
+            "svdo-meter report --last 7d",
+        );
+        assert_help_contains(["svdo-meter", "telemetry", "--help"], "sessions");
+        assert_help_contains(["svdo-meter", "telemetry", "--help"], "runs");
+        assert_help_contains(["svdo-meter", "telemetry", "--help"], "inspect");
+        assert_help_contains(
+            ["svdo-meter", "telemetry", "inspect", "--help"],
+            "Run identifier or provider session identifier",
+        );
+    }
+
+    fn parse_error_kind<T>(result: Result<T, clap::Error>) -> ErrorKind {
+        match result {
+            Ok(_) => panic!("expected parse error"),
+            Err(error) => error.kind(),
+        }
+    }
+
+    fn assert_help_contains<const N: usize>(args: [&str; N], expected: &str) {
+        let result = Cli::try_parse_from(args);
+        let error = match result {
+            Ok(_) => panic!("expected help output"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), ErrorKind::DisplayHelp);
+        assert!(
+            error.to_string().contains(expected),
+            "help output did not contain `{expected}`:\n{error}"
+        );
     }
 
     fn unique_temp_path(file_name: &str) -> std::path::PathBuf {
