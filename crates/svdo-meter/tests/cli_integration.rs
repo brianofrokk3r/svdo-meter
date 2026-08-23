@@ -67,6 +67,20 @@ fn report_command_renders_fixture_backed_outputs() -> std::io::Result<()> {
 }
 
 #[test]
+fn report_command_reads_per_run_stream_directory() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-report-streams-integration");
+    write_workspace_telemetry_streams(&workspace, REPORT_FIXTURE)?;
+
+    let terminal = run_svdo_meter(&["report", "ENG-142", "--workspace", path_str(&workspace)?]);
+    assert!(terminal.status.success());
+    assert_stdout_contains(&terminal, "SVDO Trace");
+    assert_stdout_contains(&terminal, "Runs\n  2");
+
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
 fn telemetry_commands_render_fixture_backed_outputs() -> std::io::Result<()> {
     let workspace = unique_temp_path("svdo-meter-telemetry-integration");
     write_workspace_telemetry(&workspace, TELEMETRY_FIXTURE)?;
@@ -88,6 +102,34 @@ fn telemetry_commands_render_fixture_backed_outputs() -> std::io::Result<()> {
         "telemetry",
         "inspect",
         "sess-telemetry-1",
+        "--workspace",
+        path_str(&workspace)?,
+    ]);
+    assert!(inspection.status.success());
+    assert_stdout_contains(&inspection, "usage.reported");
+
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn telemetry_commands_read_per_run_stream_directory() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-telemetry-streams-integration");
+    write_workspace_telemetry_streams(&workspace, TELEMETRY_FIXTURE)?;
+
+    let sessions = run_svdo_meter(&[
+        "telemetry",
+        "sessions",
+        "--workspace",
+        path_str(&workspace)?,
+    ]);
+    assert!(sessions.status.success());
+    assert_stdout_contains(&sessions, "sess-telemetry-1");
+
+    let inspection = run_svdo_meter(&[
+        "telemetry",
+        "inspect",
+        "018f6f1b-97f1-7c04-9a96-111111111111",
         "--workspace",
         path_str(&workspace)?,
     ]);
@@ -133,6 +175,22 @@ fn write_workspace_telemetry(workspace: &Path, contents: &str) -> std::io::Resul
     let svdo_dir = workspace.join(".svdo");
     fs::create_dir_all(&svdo_dir)?;
     fs::write(svdo_dir.join("meter.jsonl"), contents)
+}
+
+fn write_workspace_telemetry_streams(workspace: &Path, contents: &str) -> std::io::Result<()> {
+    let meter_dir = workspace.join(".svdo").join("meter");
+    fs::create_dir_all(&meter_dir)?;
+    for (index, line) in contents
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .enumerate()
+    {
+        fs::write(
+            meter_dir.join(format!("fixture-run-{index}.jsonl")),
+            format!("{line}\n"),
+        )?;
+    }
+    Ok(())
 }
 
 fn path_str(path: &Path) -> std::io::Result<&str> {

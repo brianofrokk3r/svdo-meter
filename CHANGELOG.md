@@ -2,6 +2,10 @@
 
 ## 2026-08-23
 
+- Added per-run telemetry JSONL streams under `.svdo/meter/` so concurrent `svdo-meter run` processes do not append to the same file.
+- Updated telemetry replay, reports, and inspection commands to aggregate all `.svdo/meter/*.jsonl` streams while preserving legacy `.svdo/meter.jsonl` reads.
+- Updated CLI help and empty telemetry messages for the directory-backed telemetry store.
+- Added fixture-backed storage, wiring, and CLI integration tests covering per-run stream files and legacy telemetry compatibility.
 - Refactored meter engine run requests to pass provider-neutral model, raw event retention, and harness options to adapters.
 - Removed provider-specific `HarnessConfig` model and raw-retention matching from `RunEngine`.
 - Updated Codex adapter invocation to consume neutral request fields while preserving Codex model, workspace, session resume, and telemetry behavior.
