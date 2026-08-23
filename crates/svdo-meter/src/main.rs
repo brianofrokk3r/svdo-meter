@@ -24,6 +24,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Run(args) => {
             let prompt = cli::resolve_prompt(&args)?;
+            let sink_selection = wiring::RunSinkSelection::from_args(&args);
             let ticket_id = TicketId::new(args.ticket).context("invalid --ticket value")?;
             let session_override = args
                 .session
@@ -36,7 +37,12 @@ async fn main() -> anyhow::Result<()> {
                 .transpose()
                 .context("invalid --model value")?;
             let harness_config = config::harness_config(args.harness, model);
-            let engine = wiring::engine(&args.workspace, args.harness, &harness_config.config);
+            let engine = wiring::engine(
+                &args.workspace,
+                args.harness,
+                &harness_config.config,
+                sink_selection,
+            );
             let outcome = engine
                 .run(RunRequest {
                     ticket_id,

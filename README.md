@@ -12,6 +12,7 @@ The v0.1 baseline centers on:
 - `svdo-meter telemetry`
 - the `codex` harness
 - local per-run JSONL telemetry under `.svdo/meter/`
+- optional live stdout NDJSON event streaming from `svdo-meter run`
 - rebuildable session association from `session.discovered` events
 - fixture-based tests that do not require live Codex execution
 
@@ -110,6 +111,19 @@ svdo-meter run \
   --prompt-file prompts/eng-142.md
 ```
 
+To pipe live normalized events to another process, enable stdout NDJSON output. Durable `.svdo/meter/` telemetry is still written:
+
+```bash
+svdo-meter run \
+  --ticket ENG-142 \
+  --harness codex \
+  --workspace ~/code/app \
+  --emit ndjson \
+  "Implement ENG-142" | my-company-ingester
+```
+
+Equivalent sink selection is available with `--sink stdout`; `--sink jsonl` explicitly selects the durable local JSONL sink. Supplying both `--sink stdout` and `--emit ndjson` produces one stdout event stream, not duplicate records.
+
 ## Resume A Known Session
 
 SVDO Meter records a `session.discovered` event when Codex exposes a session/thread ID. Later runs for the same ticket, harness, and workspace automatically use the latest known session when available.
@@ -158,6 +172,8 @@ By default, events are written to:
 ```
 
 Each line is one immutable canonical JSON event. The `.svdo/meter/` directory is the source of truth; session registries and reports are rebuildable projections.
+
+The local JSONL sink is enabled by default and remains active when `svdo-meter run --sink stdout` or `svdo-meter run --emit ndjson` is used.
 
 Raw provider payloads are not persisted by default. This avoids storing prompts, model responses, command output, tool results, environment variables, secrets, and other sensitive content unless raw retention is explicitly enabled in code/configuration.
 

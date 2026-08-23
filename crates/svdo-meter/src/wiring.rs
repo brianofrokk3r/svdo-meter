@@ -4,19 +4,41 @@ use std::sync::Arc;
 
 use meter_adapters::{CodexAdapter, JsonlEventStore};
 use meter_core::{HarnessConfig, HarnessKind};
-use meter_engine::RunEngine;
+use meter_engine::{NdjsonWriteSink, RunEngine};
 use meter_report::{
     ReportDiagnostic, ReportQuery, TelemetryInspection, TraceReducer, TraceReport, apply_jsonl_line,
 };
+
+use crate::cli::{EmitFormat, RunArgs, RunSink};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunSinkSelection {
+    pub jsonl: bool,
+    pub stdout_ndjson: bool,
+}
+
+impl RunSinkSelection {
+    pub fn from_args(args: &RunArgs) -> Self {
+        Self {
+            jsonl: true,
+            stdout_ndjson: args.sinks.contains(&RunSink::Stdout)
+                || args.emit == Some(EmitFormat::Ndjson),
+        }
+    }
+}
 
 pub fn engine(
     workspace: &Option<PathBuf>,
     harness: HarnessKind,
     config: &HarnessConfig,
+    sinks: RunSinkSelection,
 ) -> RunEngine {
     let base = workspace.as_deref().unwrap_or_else(|| Path::new("."));
     let store = Arc::new(JsonlEventStore::default_under(base));
-    let engine = RunEngine::new(store);
+    let mut engine = RunEngine::new(store);
+    if sinks.stdout_ndjson {
+        engine = engine.with_event_sink(Arc::new(NdjsonWriteSink::new(tokio::io::stdout())));
+    }
     match (harness, config) {
         (HarnessKind::Codex, HarnessConfig::Codex(config)) => {
             engine.with_adapter(Arc::new(CodexAdapter::new(config.binary.clone())))
@@ -86,13 +108,48 @@ fn telemetry_paths(path: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
 
 #[cfg(test)]
 mod tests {
+    use crate::cli::{EmitFormat, RunArgs, RunSink};
+
     use meter_core::{ClaudeConfig, HarnessConfig, HarnessKind, RawEventRetention, TicketId};
     use meter_engine::{HarnessOptions, RunError, RunRequest};
     use meter_report::ReportQuery;
 
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{engine, load_report, load_telemetry_inspection};
+    use super::{RunSinkSelection, engine, load_report, load_telemetry_inspection};
+
+    #[test]
+    fn run_sink_selection_preserves_jsonl_by_default() {
+        let args = run_args(Vec::new(), None);
+
+        let selection = RunSinkSelection::from_args(&args);
+
+        assert_eq!(
+            selection,
+            RunSinkSelection {
+                jsonl: true,
+                stdout_ndjson: false
+            }
+        );
+    }
+
+    #[test]
+    fn run_sink_selection_deduplicates_stdout_ndjson() {
+        let args = run_args(
+            vec![RunSink::Jsonl, RunSink::Stdout],
+            Some(EmitFormat::Ndjson),
+        );
+
+        let selection = RunSinkSelection::from_args(&args);
+
+        assert_eq!(
+            selection,
+            RunSinkSelection {
+                jsonl: true,
+                stdout_ndjson: true
+            }
+        );
+    }
 
     #[test]
     fn missing_telemetry_file_loads_empty_inspection() -> std::io::Result<()> {
@@ -133,6 +190,10 @@ mod tests {
             &workspace,
             HarnessKind::Claude,
             &HarnessConfig::Claude(ClaudeConfig { model: None }),
+            RunSinkSelection {
+                jsonl: true,
+                stdout_ndjson: false,
+            },
         );
 
         let error = engine
@@ -162,5 +223,20 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
         std::env::temp_dir().join(format!("{nanos}-{file_name}"))
+    }
+
+    fn run_args(sinks: Vec<RunSink>, emit: Option<EmitFormat>) -> RunArgs {
+        RunArgs {
+            ticket: "ENG-142".to_owned(),
+            label: None,
+            harness: HarnessKind::Codex,
+            workspace: None,
+            session: None,
+            model: None,
+            prompt_file: None,
+            prompt: Some("Do work".to_owned()),
+            sinks,
+            emit,
+        }
     }
 }
