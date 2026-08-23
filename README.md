@@ -11,7 +11,7 @@ The v0.1 baseline centers on:
 - `svdo-meter run`
 - `svdo-meter telemetry`
 - the `codex` harness
-- local JSONL telemetry at `.svdo/meter.jsonl`
+- local per-run JSONL telemetry under `.svdo/meter/`
 - rebuildable session association from `session.discovered` events
 - fixture-based tests that do not require live Codex execution
 
@@ -154,14 +154,14 @@ When telemetry references a model that is not present in the pricing JSON, the r
 By default, events are written to:
 
 ```text
-.svdo/meter.jsonl
+.svdo/meter/<run-id>.jsonl
 ```
 
-Each line is one immutable canonical JSON event. The log is the source of truth; session registries and reports are rebuildable projections.
+Each line is one immutable canonical JSON event. The `.svdo/meter/` directory is the source of truth; session registries and reports are rebuildable projections.
 
 Raw provider payloads are not persisted by default. This avoids storing prompts, model responses, command output, tool results, environment variables, secrets, and other sensitive content unless raw retention is explicitly enabled in code/configuration.
 
-Inspect local telemetry without modifying `.svdo/meter.jsonl`:
+Inspect local telemetry without modifying `.svdo/meter/`:
 
 ```bash
 svdo-meter telemetry sessions --workspace ~/code/app

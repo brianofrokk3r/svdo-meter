@@ -153,7 +153,7 @@ If `svdo-meter run --harness codex ...` fails to start Codex, confirm the Codex 
 Telemetry is written under the selected workspace:
 
 ```text
-<workspace>/.svdo/meter.jsonl
+<workspace>/.svdo/meter/<run-id>.jsonl
 ```
 
 If `--workspace` is omitted, the current directory is used.

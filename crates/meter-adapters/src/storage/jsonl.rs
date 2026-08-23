@@ -14,17 +14,9 @@ pub struct JsonlEventStore {
 
 impl JsonlEventStore {
     pub fn new(directory: impl Into<PathBuf>) -> Self {
-        let directory = directory.into();
-        let directory = if directory
-            .extension()
-            .and_then(|extension| extension.to_str())
-            == Some("jsonl")
-        {
-            directory.with_extension("")
-        } else {
-            directory
-        };
-        Self { directory }
+        Self {
+            directory: directory.into(),
+        }
     }
 
     pub fn default_under(workspace: &Path) -> Self {
@@ -37,10 +29,6 @@ impl JsonlEventStore {
 
     fn stream_path(&self, event: &MeterEvent) -> PathBuf {
         self.directory.join(format!("{}.jsonl", event.run_id))
-    }
-
-    fn legacy_path(&self) -> PathBuf {
-        self.directory.with_extension("jsonl")
     }
 }
 
@@ -68,18 +56,9 @@ impl EventStore for JsonlEventStore {
 
 impl JsonlEventStore {
     async fn stream_paths(&self) -> Result<Vec<PathBuf>, std::io::Error> {
-        let mut paths = Vec::new();
-        let legacy = self.legacy_path();
-        if tokio::fs::metadata(&legacy)
-            .await
-            .is_ok_and(|meta| meta.is_file())
-        {
-            paths.push(legacy);
-        }
-
         let mut directory = match tokio::fs::read_dir(&self.directory).await {
             Ok(directory) => directory,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(paths),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(err) => return Err(err),
         };
         let mut stream_paths = Vec::new();
@@ -92,8 +71,7 @@ impl JsonlEventStore {
             }
         }
         stream_paths.sort();
-        paths.extend(stream_paths);
-        Ok(paths)
+        Ok(stream_paths)
     }
 }
 
@@ -298,84 +276,6 @@ mod tests {
             store
                 .path()
                 .join(format!("{}.jsonl", second.run_id))
-                .is_file()
-        );
-    }
-
-    #[tokio::test]
-    async fn stream_replays_legacy_jsonl_file() {
-        let dir = tempfile::tempdir().unwrap_or_else(|err| panic!("{err}"));
-        let store = JsonlEventStore::new(dir.path().join(".svdo").join("meter"));
-        let ticket_id = TicketId::new("ENG-1").unwrap_or_else(|err| panic!("{err}"));
-        let context = EventContext {
-            run_id: RunId::new(),
-            ticket_id: ticket_id.clone(),
-            label: None,
-            harness: HarnessKind::Codex,
-            requested_model: None,
-            resolved_model: None,
-            session_id: None,
-            workspace: Some(dir.path().to_path_buf()),
-        };
-        let event = MeterEvent::new(
-            context,
-            EventPayload::RunStarted(RunStarted {
-                prompt_recorded: false,
-            }),
-        );
-        tokio::fs::create_dir_all(dir.path().join(".svdo"))
-            .await
-            .unwrap_or_else(|err| panic!("{err}"));
-        tokio::fs::write(
-            dir.path().join(".svdo").join("meter.jsonl"),
-            format!(
-                "{}\n",
-                serde_json::to_string(&event).unwrap_or_else(|err| panic!("{err}"))
-            ),
-        )
-        .await
-        .unwrap_or_else(|err| panic!("{err}"));
-
-        let replayed = store
-            .stream(EventQuery::default())
-            .await
-            .unwrap_or_else(|err| panic!("{err}"));
-
-        assert_eq!(replayed, vec![event]);
-    }
-
-    #[tokio::test]
-    async fn constructor_accepts_legacy_jsonl_path() {
-        let dir = tempfile::tempdir().unwrap_or_else(|err| panic!("{err}"));
-        let store = JsonlEventStore::new(dir.path().join(".svdo").join("meter.jsonl"));
-        let ticket_id = TicketId::new("ENG-1").unwrap_or_else(|err| panic!("{err}"));
-        let context = EventContext {
-            run_id: RunId::new(),
-            ticket_id: ticket_id.clone(),
-            label: None,
-            harness: HarnessKind::Codex,
-            requested_model: None,
-            resolved_model: None,
-            session_id: None,
-            workspace: Some(dir.path().to_path_buf()),
-        };
-        let event = MeterEvent::new(
-            context,
-            EventPayload::RunStarted(RunStarted {
-                prompt_recorded: false,
-            }),
-        );
-
-        store
-            .append(&event)
-            .await
-            .unwrap_or_else(|err| panic!("{err}"));
-
-        assert_eq!(store.path(), dir.path().join(".svdo").join("meter"));
-        assert!(
-            store
-                .path()
-                .join(format!("{}.jsonl", event.run_id))
                 .is_file()
         );
     }

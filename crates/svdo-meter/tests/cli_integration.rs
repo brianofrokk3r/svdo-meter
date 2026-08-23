@@ -33,7 +33,7 @@ fn invalid_run_arguments_fail_before_harness_execution() {
 #[test]
 fn report_command_renders_fixture_backed_outputs() -> std::io::Result<()> {
     let workspace = unique_temp_path("svdo-meter-report-integration");
-    write_workspace_telemetry(&workspace, REPORT_FIXTURE)?;
+    write_workspace_telemetry_streams(&workspace, REPORT_FIXTURE)?;
 
     let terminal = run_svdo_meter(&["report", "ENG-142", "--workspace", path_str(&workspace)?]);
     assert!(terminal.status.success());
@@ -83,7 +83,7 @@ fn report_command_reads_per_run_stream_directory() -> std::io::Result<()> {
 #[test]
 fn telemetry_commands_render_fixture_backed_outputs() -> std::io::Result<()> {
     let workspace = unique_temp_path("svdo-meter-telemetry-integration");
-    write_workspace_telemetry(&workspace, TELEMETRY_FIXTURE)?;
+    write_workspace_telemetry_streams(&workspace, TELEMETRY_FIXTURE)?;
 
     let sessions = run_svdo_meter(&[
         "telemetry",
@@ -169,12 +169,6 @@ fn run_svdo_meter(args: &[&str]) -> Output {
         .args(args)
         .output()
         .unwrap_or_else(|error| panic!("failed to run svdo-meter: {error}"))
-}
-
-fn write_workspace_telemetry(workspace: &Path, contents: &str) -> std::io::Result<()> {
-    let svdo_dir = workspace.join(".svdo");
-    fs::create_dir_all(&svdo_dir)?;
-    fs::write(svdo_dir.join("meter.jsonl"), contents)
 }
 
 fn write_workspace_telemetry_streams(workspace: &Path, contents: &str) -> std::io::Result<()> {

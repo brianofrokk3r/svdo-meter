@@ -65,19 +65,9 @@ pub fn load_telemetry_inspection(path: &Path) -> Result<TelemetryInspection, std
 }
 
 fn telemetry_paths(path: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
-    if path.is_file() {
-        return Ok(vec![path.to_path_buf()]);
-    }
-
-    let mut paths = Vec::new();
-    let legacy_path = path.with_extension("jsonl");
-    if legacy_path.is_file() {
-        paths.push(legacy_path);
-    }
-
     let entries = match std::fs::read_dir(path) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(paths),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(error),
     };
     let mut stream_paths = Vec::new();
@@ -91,8 +81,7 @@ fn telemetry_paths(path: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
         }
     }
     stream_paths.sort();
-    paths.extend(stream_paths);
-    Ok(paths)
+    Ok(stream_paths)
 }
 
 #[cfg(test)]

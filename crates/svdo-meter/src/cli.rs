@@ -25,12 +25,12 @@ pub enum Commands {
     Run(RunArgs),
     #[command(about = "Generate a local SVDO Trace report from JSONL telemetry")]
     #[command(
-        after_help = "Examples:\n  svdo-meter report ENG-142\n  svdo-meter report --last 7d\n  svdo-meter report --label plan\n  svdo-meter report ENG-142 --format json\n  svdo-meter report --last 7d --format csv\n  svdo-meter report --pricing-file pricing.json\n\nReports read per-run streams from .svdo/meter/ under --workspace or the current directory, plus legacy .svdo/meter.jsonl when present. Without WORK, output is grouped by work identifier; records without one are shown as Unknown. Token output preserves input, output, cache, and total fields, with missing components shown distinctly from zero. Pricing rates are specified as cost per 1,000,000 tokens."
+        after_help = "Examples:\n  svdo-meter report ENG-142\n  svdo-meter report --last 7d\n  svdo-meter report --label plan\n  svdo-meter report ENG-142 --format json\n  svdo-meter report --last 7d --format csv\n  svdo-meter report --pricing-file pricing.json\n\nReports read per-run streams from .svdo/meter/ under --workspace or the current directory. Without WORK, output is grouped by work identifier; records without one are shown as Unknown. Token output preserves input, output, cache, and total fields, with missing components shown distinctly from zero. Pricing rates are specified as cost per 1,000,000 tokens."
     )]
     Report(ReportArgs),
     #[command(about = "Inspect local SVDO Meter telemetry")]
     #[command(
-        after_help = "Examples:\n  svdo-meter telemetry sessions\n  svdo-meter telemetry runs\n  svdo-meter telemetry inspect 018f6f1b-97f1-7c04-9a96-111111111111\n  svdo-meter telemetry inspect sess-abc123\n\nTelemetry inspection reads per-run streams from .svdo/meter/ under --workspace or the current directory, plus legacy .svdo/meter.jsonl when present. Malformed JSONL lines are reported as diagnostics while valid records remain inspectable."
+        after_help = "Examples:\n  svdo-meter telemetry sessions\n  svdo-meter telemetry runs\n  svdo-meter telemetry inspect 018f6f1b-97f1-7c04-9a96-111111111111\n  svdo-meter telemetry inspect sess-abc123\n\nTelemetry inspection reads per-run streams from .svdo/meter/ under --workspace or the current directory. Malformed JSONL lines are reported as diagnostics while valid records remain inspectable."
     )]
     Telemetry(TelemetryArgs),
 }
