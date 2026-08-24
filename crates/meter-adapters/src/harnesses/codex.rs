@@ -1,11 +1,11 @@
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use async_trait::async_trait;
 use meter_core::{
-    CommandCompleted, CommandStarted, EventContext, EventPayload, FilesChanged, HarnessEvent,
-    HarnessKind, MeterEvent, RawEventRetention, RunMetrics, SessionDiscovered, SessionId,
-    TokenUsage, ToolCompleted, ToolStarted,
+    CodexApprovalMode, CodexConfig, CommandCompleted, CommandStarted, EventContext, EventPayload,
+    FilesChanged, HarnessEvent, HarnessKind, MeterEvent, RawEventRetention, RunMetrics,
+    SessionDiscovered, SessionId, TokenUsage, ToolCompleted, ToolStarted,
 };
 use meter_engine::{
     EventSender, HarnessAdapter, HarnessCapabilities, HarnessError, HarnessRunRequest,
@@ -19,20 +19,18 @@ const MAX_PROVIDER_LINE_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct CodexAdapter {
-    binary: PathBuf,
+    config: CodexConfig,
 }
 
 impl CodexAdapter {
-    pub fn new(binary: impl Into<PathBuf>) -> Self {
-        Self {
-            binary: binary.into(),
-        }
+    pub fn new(config: CodexConfig) -> Self {
+        Self { config }
     }
 }
 
 impl Default for CodexAdapter {
     fn default() -> Self {
-        Self::new("codex")
+        Self::new(CodexConfig::default())
     }
 }
 
@@ -57,8 +55,9 @@ impl HarnessAdapter for CodexAdapter {
         request: HarnessRunRequest,
         events: EventSender,
     ) -> Result<HarnessRunResult, HarnessError> {
-        let mut command = Command::new(&self.binary);
+        let mut command = Command::new(&self.config.binary);
         command.args(codex_argv(
+            &self.config,
             request.context.workspace.as_deref(),
             request.model.as_ref(),
             request.session_id.as_ref(),
@@ -124,6 +123,7 @@ impl HarnessAdapter for CodexAdapter {
 }
 
 pub fn codex_argv(
+    config: &CodexConfig,
     workspace: Option<&Path>,
     model: Option<&meter_core::ModelName>,
     session_id: Option<&SessionId>,
@@ -137,6 +137,24 @@ pub fn codex_argv(
     if let Some(model) = model {
         args.push(OsString::from("--model"));
         args.push(OsString::from(model.as_str()));
+    }
+    if let Some(profile) = &config.profile {
+        args.push(OsString::from("--profile"));
+        args.push(OsString::from(profile));
+    }
+    if let Some(sandbox) = config.sandbox {
+        args.push(OsString::from("--sandbox"));
+        args.push(OsString::from(sandbox.as_str()));
+    }
+    if config.approval_mode == CodexApprovalMode::ApproveForMe {
+        args.push(OsString::from("--approve-for-me"));
+    }
+    if config.yolo {
+        args.push(OsString::from("--dangerously-bypass-approvals-and-sandbox"));
+    }
+    for override_value in &config.config_overrides {
+        args.push(OsString::from("--config"));
+        args.push(OsString::from(override_value.as_key_value()));
     }
     if let Some(session_id) = session_id {
         args.push(OsString::from("resume"));
@@ -380,6 +398,7 @@ fn bool_field(value: &Value, key: &str) -> Option<bool> {
 #[cfg(test)]
 mod tests {
     use meter_core::{EventType, RunId, TicketId};
+    use std::path::PathBuf;
 
     use super::*;
 
@@ -454,6 +473,7 @@ mod tests {
         let session = SessionId::new("session-1").unwrap_or_else(|err| panic!("{err}"));
 
         let args = codex_argv(
+            &CodexConfig::default(),
             Some(Path::new("/tmp/work space")),
             Some(&model),
             Some(&session),
@@ -472,6 +492,63 @@ mod tests {
                 OsString::from("resume"),
                 OsString::from("session-1"),
                 OsString::from("Fix tests"),
+            ]
+        );
+    }
+
+    #[test]
+    fn builds_codex_arguments_for_profile_sandbox_approval_and_yolo() {
+        let config = CodexConfig {
+            profile: Some("default".to_owned()),
+            sandbox: Some(meter_core::CodexSandboxMode::WorkspaceWrite),
+            approval_mode: CodexApprovalMode::ApproveForMe,
+            yolo: true,
+            ..CodexConfig::default()
+        };
+
+        let args = codex_argv(&config, None, None, None, "Prototype");
+
+        assert_eq!(
+            args,
+            vec![
+                OsString::from("exec"),
+                OsString::from("--json"),
+                OsString::from("--profile"),
+                OsString::from("default"),
+                OsString::from("--sandbox"),
+                OsString::from("workspace-write"),
+                OsString::from("--approve-for-me"),
+                OsString::from("--dangerously-bypass-approvals-and-sandbox"),
+                OsString::from("Prototype"),
+            ]
+        );
+    }
+
+    #[test]
+    fn builds_repeated_codex_config_overrides_before_final_prompt() {
+        let config = CodexConfig {
+            config_overrides: vec![
+                meter_core::CodexConfigOverride::new("model_reasoning_effort", "high"),
+                meter_core::CodexConfigOverride::new("features.foo", "true"),
+            ],
+            ..CodexConfig::default()
+        };
+
+        let args = codex_argv(&config, Some(Path::new(".")), None, None, "Do work");
+
+        assert_eq!(args.last(), Some(&OsString::from("Do work")));
+        assert_eq!(
+            args,
+            vec![
+                OsString::from("exec"),
+                OsString::from("--json"),
+                OsString::from("-C"),
+                OsString::from("."),
+                OsString::from("--config"),
+                OsString::from("model_reasoning_effort=high"),
+                OsString::from("--config"),
+                OsString::from("features.foo=true"),
+                OsString::from("Do work"),
             ]
         );
     }
