@@ -102,8 +102,51 @@ impl Default for CodexConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaudeConfig {
+    pub binary: PathBuf,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelName>,
+    pub raw_event_retention: RawEventRetention,
+}
+
+impl Default for ClaudeConfig {
+    fn default() -> Self {
+        Self {
+            binary: PathBuf::from("claude"),
+            model: None,
+            raw_event_retention: RawEventRetention::Disabled,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClaudeRunOptions {
+    pub continue_latest: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resume: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    pub fork_session: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
+    pub allowed_tools: Vec<String>,
+    pub disallowed_tools: Vec<String>,
+    pub add_dirs: Vec<PathBuf>,
+    pub mcp_configs: Vec<String>,
+    pub strict_mcp_config: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settings: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub setting_sources: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_prompt_file: Option<PathBuf>,
+    pub append_system_prompts: Vec<String>,
+    pub append_system_prompt_files: Vec<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_budget_usd: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -228,8 +228,8 @@ fn harness_error_reason(error: &HarnessError) -> String {
     match error {
         HarnessError::Spawn(source) => format!("failed to start harness process: {source}"),
         HarnessError::Io(source) => format!("failed to read harness output: {source}"),
-        HarnessError::UnsupportedConfig => {
-            "unsupported harness configuration for adapter".to_owned()
+        HarnessError::UnsupportedConfig(message) => {
+            format!("unsupported harness configuration for adapter: {message}")
         }
         HarnessError::Interrupted => "harness process was interrupted".to_owned(),
     }

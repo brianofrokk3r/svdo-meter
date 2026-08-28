@@ -2,7 +2,7 @@ use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use meter_adapters::{CodexAdapter, JsonlEventStore};
+use meter_adapters::{ClaudeAdapter, CodexAdapter, JsonlEventStore};
 use meter_core::{HarnessConfig, HarnessKind};
 use meter_engine::{NdjsonWriteSink, RunEngine};
 use meter_report::{
@@ -43,8 +43,12 @@ pub fn engine(
         (HarnessKind::Codex, HarnessConfig::Codex(config)) => {
             engine.with_adapter(Arc::new(CodexAdapter::new(config.binary.clone())))
         }
-        (HarnessKind::Claude | HarnessKind::Gemini, _) => engine,
+        (HarnessKind::Claude, HarnessConfig::Claude(config)) => {
+            engine.with_adapter(Arc::new(ClaudeAdapter::new(config.binary.clone())))
+        }
+        (HarnessKind::Gemini, _) => engine,
         (HarnessKind::Codex, _) => engine,
+        (HarnessKind::Claude, _) => engine,
     }
 }
 
@@ -110,7 +114,7 @@ fn telemetry_paths(path: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
 mod tests {
     use crate::cli::{EmitFormat, RunArgs, RunSink};
 
-    use meter_core::{ClaudeConfig, HarnessConfig, HarnessKind, RawEventRetention, TicketId};
+    use meter_core::{GeminiConfig, HarnessConfig, HarnessKind, RawEventRetention, TicketId};
     use meter_engine::{HarnessOptions, RunError, RunRequest};
     use meter_report::ReportQuery;
 
@@ -184,12 +188,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn claude_wiring_does_not_register_codex_adapter() {
+    async fn gemini_wiring_has_no_adapter_until_supported() {
         let workspace = Some(unique_temp_path("workspace"));
         let engine = engine(
             &workspace,
-            HarnessKind::Claude,
-            &HarnessConfig::Claude(ClaudeConfig { model: None }),
+            HarnessKind::Gemini,
+            &HarnessConfig::Gemini(GeminiConfig { model: None }),
             RunSinkSelection {
                 jsonl: true,
                 stdout_ndjson: false,
@@ -198,9 +202,9 @@ mod tests {
 
         let error = engine
             .run(RunRequest {
-                ticket_id: TicketId::new("ENG-CLAUDE").unwrap_or_else(|err| panic!("{err}")),
+                ticket_id: TicketId::new("ENG-GEMINI").unwrap_or_else(|err| panic!("{err}")),
                 label: None,
-                harness: HarnessKind::Claude,
+                harness: HarnessKind::Gemini,
                 workspace,
                 session_override: None,
                 model: None,
@@ -214,7 +218,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            RunError::MissingAdapter(HarnessKind::Claude)
+            RunError::MissingAdapter(HarnessKind::Gemini)
         ));
     }
 
@@ -233,6 +237,24 @@ mod tests {
             workspace: None,
             session: None,
             model: None,
+            claude_continue: false,
+            claude_resume: None,
+            claude_session_id: None,
+            claude_fork_session: false,
+            claude_permission_mode: None,
+            claude_allowed_tools: Vec::new(),
+            claude_disallowed_tools: Vec::new(),
+            claude_add_dirs: Vec::new(),
+            claude_mcp_configs: Vec::new(),
+            claude_strict_mcp_config: false,
+            claude_settings: None,
+            claude_setting_sources: None,
+            claude_system_prompt: None,
+            claude_system_prompt_file: None,
+            claude_append_system_prompts: Vec::new(),
+            claude_append_system_prompt_files: Vec::new(),
+            claude_max_turns: None,
+            claude_max_budget_usd: None,
             prompt_file: None,
             prompt: Some("Do work".to_owned()),
             sinks,
