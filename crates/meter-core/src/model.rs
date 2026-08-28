@@ -88,6 +88,14 @@ pub struct CodexConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelName>,
     pub raw_event_retention: RawEventRetention,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<CodexSandboxMode>,
+    pub approval_mode: CodexApprovalMode,
+    pub yolo: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub config_overrides: Vec<CodexConfigOverride>,
 }
 
 impl Default for CodexConfig {
@@ -96,7 +104,80 @@ impl Default for CodexConfig {
             binary: PathBuf::from("codex"),
             model: None,
             raw_event_retention: RawEventRetention::Disabled,
+            profile: None,
+            sandbox: None,
+            approval_mode: CodexApprovalMode::default(),
+            yolo: false,
+            config_overrides: Vec::new(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CodexSandboxMode {
+    ReadOnly,
+    WorkspaceWrite,
+    DangerFullAccess,
+}
+
+impl CodexSandboxMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::WorkspaceWrite => "workspace-write",
+            Self::DangerFullAccess => "danger-full-access",
+        }
+    }
+}
+
+impl Display for CodexSandboxMode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+#[error("unsupported Codex sandbox `{0}`")]
+pub struct CodexSandboxParseError(String);
+
+impl FromStr for CodexSandboxMode {
+    type Err = CodexSandboxParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "read-only" => Ok(Self::ReadOnly),
+            "workspace-write" => Ok(Self::WorkspaceWrite),
+            "danger-full-access" => Ok(Self::DangerFullAccess),
+            other => Err(CodexSandboxParseError(other.to_owned())),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexApprovalMode {
+    #[default]
+    Manual,
+    ApproveForMe,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodexConfigOverride {
+    pub key: String,
+    pub value: String,
+}
+
+impl CodexConfigOverride {
+    pub fn new(key: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            value: value.into(),
+        }
+    }
+
+    pub fn as_key_value(&self) -> String {
+        format!("{}={}", self.key, self.value)
     }
 }
 

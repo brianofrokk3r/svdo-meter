@@ -4,8 +4,17 @@
 
 - Updated Rust CI Clippy to run with `--all-features` while preserving workspace, all-targets, locked dependency, and denied-warning checks.
 
+## 2026-08-24
+
+- Added Codex-specific `svdo-meter run` options: `--codex-profile`, `--codex-sandbox`, `--codex-approve-for-me`, `--codex-yolo`, and repeatable `--codex-config`.
+- Added typed Codex runtime configuration for profile, sandbox, approval mode, dangerous bypass mode, and config overrides.
+- Updated Codex argv construction to pass profile, sandbox, approval mode, dangerous bypass, repeated config overrides, workspace, model, session resume, and prompt using explicit process arguments.
+- Added validation that rejects Codex-only flags for non-Codex harnesses and rejects malformed `--codex-config` overrides before spawning a harness.
+- Updated CLI help, docs, unit tests, and integration tests for Codex-specific options while preserving provider-neutral run behavior and telemetry.
+
 ## 2026-08-23
 
+- Added explicit versions to internal workspace path dependencies so `cargo deny check` no longer treats them as wildcard dependencies.
 - Added live event sink selection for `svdo-meter run` with `--sink jsonl`, `--sink stdout`, and `--emit ndjson`.
 - Added stdout NDJSON event streaming while preserving default durable per-run JSONL telemetry under `.svdo/meter/`.
 - Added sink fan-out and failure behavior tests for normalized `MeterEvent` output.

@@ -25,18 +25,19 @@ async fn main() -> anyhow::Result<()> {
         Commands::Run(args) => {
             let prompt = cli::resolve_prompt(&args)?;
             let sink_selection = wiring::RunSinkSelection::from_args(&args);
+            let model = args
+                .model
+                .as_deref()
+                .map(|model| ModelName::new(model.to_owned()))
+                .transpose()
+                .context("invalid --model value")?;
+            let harness_config = config::harness_config(&args, model)?;
             let ticket_id = TicketId::new(args.ticket).context("invalid --ticket value")?;
             let session_override = args
                 .session
                 .map(SessionId::new)
                 .transpose()
                 .context("invalid --session value")?;
-            let model = args
-                .model
-                .map(ModelName::new)
-                .transpose()
-                .context("invalid --model value")?;
-            let harness_config = config::harness_config(args.harness, model);
             let engine = wiring::engine(
                 &args.workspace,
                 args.harness,

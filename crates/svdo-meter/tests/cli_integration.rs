@@ -19,6 +19,11 @@ fn help_succeeds_for_documented_command_paths() {
         &["telemetry", "inspect", "--help"],
         "Run identifier or provider session identifier",
     );
+    assert_success_contains(&["run", "--help"], "--codex-profile");
+    assert_success_contains(
+        &["run", "--help"],
+        "svdo-meter run --ticket ENG-142 --harness codex --codex-yolo PROMPT",
+    );
 }
 
 #[test]
@@ -28,6 +33,25 @@ fn invalid_run_arguments_fail_before_harness_execution() {
     assert!(!output.status.success());
     assert_output_contains(&output, "required");
     assert_output_contains(&output, "PROMPT");
+}
+
+#[test]
+fn codex_flags_fail_with_non_codex_harness_before_harness_execution() {
+    let output = run_svdo_meter(&[
+        "run",
+        "--ticket",
+        "ENG-142",
+        "--harness",
+        "claude",
+        "--codex-yolo",
+        "Implement ENG-142",
+    ]);
+
+    assert!(!output.status.success());
+    assert_output_contains(
+        &output,
+        "Codex-specific --codex-* options require --harness codex",
+    );
 }
 
 #[test]
