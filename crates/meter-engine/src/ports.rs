@@ -56,8 +56,8 @@ pub enum HarnessError {
     Spawn(#[source] std::io::Error),
     #[error("failed to read harness output")]
     Io(#[source] std::io::Error),
-    #[error("unsupported harness configuration for adapter")]
-    UnsupportedConfig,
+    #[error("unsupported harness configuration for adapter: {0}")]
+    UnsupportedConfig(String),
     #[error("harness process was interrupted")]
     Interrupted,
 }

@@ -26,7 +26,14 @@ For real measured Codex runs, install and authenticate the Codex CLI separately 
 codex --help
 ```
 
-Fixture tests and normal compilation do not require live Codex execution.
+For real measured Claude Code runs, install and authenticate Claude Code separately and ensure `claude` is on `PATH`:
+
+```bash
+claude --help
+claude auth status
+```
+
+Fixture tests and normal compilation do not require live Codex or Claude Code execution.
 
 ## Build Debug Binary
 
@@ -76,6 +83,18 @@ cargo run -p svdo-meter -- run \
   --harness codex \
   --workspace . \
   --prompt-file prompts/eng-142.md
+```
+
+Example Claude Code measured run:
+
+```bash
+cargo run -p svdo-meter -- run \
+  --ticket ENG-142 \
+  --harness claude \
+  --model sonnet \
+  --workspace . \
+  --claude-max-turns 3 \
+  "Implement ENG-142"
 ```
 
 ## Build Release Binary
@@ -149,6 +168,8 @@ If `cargo` is not found, Rust is not installed or Cargo's bin directory is not o
 If `svdo-meter` is not found after `cargo install`, add Cargo's bin directory to `PATH`.
 
 If `svdo-meter run --harness codex ...` fails to start Codex, confirm the Codex CLI is installed, authenticated, and available as `codex` on `PATH`.
+
+If `svdo-meter run --harness claude ...` fails to start Claude Code, confirm the Claude Code CLI is installed, authenticated, and available as `claude` on `PATH`. SVDO Meter runs Claude Code in print mode with `--output-format stream-json --verbose`; unsupported combinations such as conflicting resume/session flags fail before launch.
 
 Telemetry is written under the selected workspace:
 
