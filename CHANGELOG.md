@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-28
+
+- Added a top-level GitHub installer script for installing prebuilt `svdo-meter` release binaries without cloning the repository.
+- Added installer platform mapping, SHA-256 checksum verification, `$HOME/.local/bin` default installation, `SVDO_METER_INSTALL_DIR` override support, and installed-binary verification with `svdo-meter --help`.
+- Added a main-branch GitHub Release workflow that builds Linux x86_64, macOS x86_64, and macOS arm64 archives with predictable asset names and checksum files.
+- Added lightweight shell validation for installer syntax and platform mapping to Rust CI.
+- Documented the raw GitHub install command, default install location, and supported installer platforms.
+- Added Spec Kit constitution, spec, plan, and completed task checklist artifacts for the installer and release-binary workflow.
+
 ## 2026-08-23
 
 - Added live event sink selection for `svdo-meter run` with `--sink jsonl`, `--sink stdout`, and `--emit ndjson`.

@@ -36,6 +36,34 @@ cargo run -p svdo-meter -- report --help
 cargo run -p svdo-meter -- telemetry --help
 ```
 
+## Install From GitHub
+
+Install the latest published release binary without cloning the repository:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/brianofrokk3r/svdo-meter/main/install.sh | bash
+```
+
+The installer downloads the matching GitHub Release asset, verifies its SHA-256 checksum, installs `svdo-meter` to:
+
+```text
+$HOME/.local/bin
+```
+
+Override the install directory with `SVDO_METER_INSTALL_DIR`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/brianofrokk3r/svdo-meter/main/install.sh | SVDO_METER_INSTALL_DIR="$HOME/bin" bash
+```
+
+Supported installer platforms:
+
+- Linux x86_64
+- macOS x86_64
+- macOS arm64/aarch64
+
+After installation, the script verifies the binary with `svdo-meter --help`. If `$HOME/.local/bin` is not on `PATH`, add it before running `svdo-meter` from another directory.
+
 ## Compile
 
 Prerequisites:

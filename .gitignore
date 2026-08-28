@@ -4,4 +4,9 @@
 .svdo
 .specify
 specs
+!.specify/
+!.specify/memory/
+!.specify/memory/constitution.md
+!specs/
+!specs/**
 target
