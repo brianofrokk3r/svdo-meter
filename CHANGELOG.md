@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-28
+
+- Updated Rust CI Clippy to run with `--all-features` while preserving workspace, all-targets, locked dependency, and denied-warning checks.
+
 ## 2026-08-24
 
 - Added Codex-specific `svdo-meter run` options: `--codex-profile`, `--codex-sandbox`, `--codex-approve-for-me`, `--codex-yolo`, and repeatable `--codex-config`.
