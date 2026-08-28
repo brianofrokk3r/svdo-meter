@@ -25,6 +25,11 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Validate installer script
+        run: |
+          sh -n install.sh
+          sh tests/install_sh_test.sh
+
       - name: Run clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 

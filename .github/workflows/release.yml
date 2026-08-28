@@ -1,0 +1,87 @@
+name: Release Binaries
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            platform: macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            platform: macos-aarch64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable toolchain
+        run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --locked -p svdo-meter --target ${{ matrix.target }}
+
+      - name: Package release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/package
+          cp "target/${{ matrix.target }}/release/svdo-meter" dist/package/svdo-meter
+          chmod 755 dist/package/svdo-meter
+          tar -C dist/package -czf "dist/svdo-meter-${{ matrix.platform }}.tar.gz" svdo-meter
+          (
+            cd dist
+            shasum -a 256 "svdo-meter-${{ matrix.platform }}.tar.gz" > "svdo-meter-${{ matrix.platform }}.tar.gz.sha256"
+          )
+
+      - name: Upload packaged asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: svdo-meter-${{ matrix.platform }}
+          path: |
+            dist/svdo-meter-${{ matrix.platform }}.tar.gz
+            dist/svdo-meter-${{ matrix.platform }}.tar.gz.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download packaged assets
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: main-${{ github.sha }}
+          name: main-${{ github.sha }}
+          target_commitish: ${{ github.sha }}
+          body: Automated release binaries for main commit ${{ github.sha }}.
+          make_latest: true
+          files: |
+            dist/svdo-meter-linux-x86_64.tar.gz
+            dist/svdo-meter-linux-x86_64.tar.gz.sha256
+            dist/svdo-meter-macos-x86_64.tar.gz
+            dist/svdo-meter-macos-x86_64.tar.gz.sha256
+            dist/svdo-meter-macos-aarch64.tar.gz
+            dist/svdo-meter-macos-aarch64.tar.gz.sha256
