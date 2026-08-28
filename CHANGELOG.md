@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-28
+
+- Updated Rust CI Clippy to run with `--all-features` while preserving workspace, all-targets, locked dependency, and denied-warning checks.
+
 ## 2026-08-23
 
 - Added live event sink selection for `svdo-meter run` with `--sink jsonl`, `--sink stdout`, and `--emit ndjson`.
