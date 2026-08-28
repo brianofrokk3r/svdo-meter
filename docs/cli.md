@@ -68,20 +68,54 @@ svdo-meter run \
   --prompt-file prompts/eng-142.md
 ```
 
+Codex-specific safe options:
+
+```bash
+svdo-meter run \
+  --ticket ENG-142 \
+  --harness codex \
+  --codex-profile default \
+  --codex-sandbox workspace-write \
+  --codex-config model_reasoning_effort=high \
+  "Implement ENG-142"
+```
+
+Dangerous Codex bypass mode:
+
+```bash
+svdo-meter run \
+  --ticket ENG-142 \
+  --harness codex \
+  --codex-yolo \
+  "Prototype ENG-142 in an externally sandboxed environment"
+```
+
 ### Arguments
+
+Common options:
 
 | Argument | Required | Description |
 |---|---:|---|
 | `--ticket <TICKET>` | Yes | External ticket/work identifier. SVDO Meter records this as the join key for future reports or enrichment. |
-| `--harness <HARNESS>` | Yes | Agent CLI harness. v0.1 supports `codex`. |
+| `--harness <HARNESS>` | Yes | Agent CLI harness. Supported values: `codex`, `claude`. |
 | `<PROMPT>` | Yes, unless `--prompt-file` is used | Inline prompt or work instruction forwarded to the harness. Prompts are not persisted by default. |
 | `--prompt-file <PATH>` | Yes, unless `<PROMPT>` is used | UTF-8 text file whose contents are forwarded to the harness as the prompt. Cannot be combined with an inline prompt. |
 | `--label <LABEL>` | No | Human-readable label copied to canonical run events. |
 | `--workspace <PATH>` | No | Workspace directory passed to the harness and used as the base for `.svdo/meter/`. |
 | `--session <SESSION_ID>` | No | Explicit provider session/thread override for this run. |
-| `--model <MODEL>` | No | Harness-specific model configuration. For Codex this is passed as a Codex model argument. |
+| `--model <MODEL>` | No | Harness-specific model configuration. Passed to Codex or Claude Code. |
 | `--sink <SINK>` | No | Event output sink. Repeatable. Supported values: `jsonl`, `stdout`. Durable `jsonl` telemetry remains enabled by default. |
 | `--emit <FORMAT>` | No | Convenience event stream format. Supported value: `ndjson`, equivalent to enabling the stdout sink. |
+
+Codex-specific options, valid only with `--harness codex`:
+
+| Argument | Description |
+|---|---|
+| `--codex-profile <NAME>` | Passes `--profile <NAME>` to Codex. |
+| `--codex-sandbox <MODE>` | Passes `--sandbox <MODE>` to Codex. Supported values: `read-only`, `workspace-write`, `danger-full-access`. |
+| `--codex-approve-for-me` | Passes `--approve-for-me` to Codex. |
+| `--codex-yolo` | Passes Codex's dangerous `--dangerously-bypass-approvals-and-sandbox` flag. No provider-neutral `--yolo` exists. |
+| `--codex-config <key=value>` | Passes a repeated `--config <key=value>` override to Codex. Keys and values must be non-empty. |
 
 SVDO Meter reads `--prompt-file` before starting the harness. Missing, unreadable, or non-UTF-8 files fail fast with a path-aware CLI error.
 
@@ -185,7 +219,7 @@ The Codex adapter invokes the CLI with explicit process arguments, not a shell c
 First run shape:
 
 ```text
-codex exec --json -C <workspace> <prompt>
+codex exec --json -C <workspace> [--model <model>] [--profile <profile>] [--sandbox <mode>] [--approve-for-me] [--dangerously-bypass-approvals-and-sandbox] [--config <key=value>...] <prompt>
 ```
 
 When `--prompt-file <path>` is used, SVDO Meter reads the file and passes the resolved text as `<prompt>`.
@@ -193,7 +227,7 @@ When `--prompt-file <path>` is used, SVDO Meter reads the file and passes the re
 Resume shape when a session is known:
 
 ```text
-codex exec --json -C <workspace> resume <session_id> <prompt>
+codex exec --json -C <workspace> [codex options...] resume <session_id> <prompt>
 ```
 
 Model shape:
@@ -201,6 +235,74 @@ Model shape:
 ```text
 codex exec --json -C <workspace> --model <model> <prompt>
 ```
+
+SVDO Meter validates Codex-specific flags before spawning Codex. Codex-specific flags are rejected with non-Codex harnesses.
+
+## Claude Code Harness
+
+The Claude adapter invokes the local `claude` CLI with explicit process arguments and sets the child process current directory to `--workspace` when supplied. Install and authenticate Claude Code separately, and confirm `claude --help` works before running real measured Claude sessions.
+
+New non-interactive run shape:
+
+```text
+claude -p <prompt> --output-format stream-json --verbose
+```
+
+Model shape:
+
+```text
+claude -p <prompt> --output-format stream-json --verbose --model <model>
+```
+
+Generic session override shape:
+
+```text
+claude -p <prompt> --output-format stream-json --verbose --resume <session_id>
+```
+
+Continue and explicit resume shapes:
+
+```text
+claude -p <prompt> --output-format stream-json --verbose --continue
+claude -p <prompt> --output-format stream-json --verbose --resume <session_id_or_name>
+claude -p <prompt> --output-format stream-json --verbose --resume <session_id_or_name> --fork-session
+```
+
+Supported Claude-specific options:
+
+| SVDO Meter option | Claude Code flag |
+|---|---|
+| `--claude-continue` | `--continue` |
+| `--claude-resume <SESSION>` | `--resume <SESSION>` |
+| `--claude-session-id <UUID>` | `--session-id <UUID>` |
+| `--claude-fork-session` | `--fork-session` |
+| `--claude-permission-mode <MODE>` | `--permission-mode <MODE>` |
+| `--claude-allowed-tool <RULE>` | `--allowed-tools <RULE>` |
+| `--claude-disallowed-tool <RULE>` | `--disallowed-tools <RULE>` |
+| `--claude-add-dir <PATH>` | `--add-dir <PATH>` |
+| `--claude-mcp-config <PATH_OR_JSON>` | `--mcp-config <PATH_OR_JSON>` |
+| `--claude-strict-mcp-config` | `--strict-mcp-config` |
+| `--claude-settings <PATH_OR_JSON>` | `--settings <PATH_OR_JSON>` |
+| `--claude-setting-sources <SOURCES>` | `--setting-sources <SOURCES>` |
+| `--claude-system-prompt <TEXT>` | `--system-prompt <TEXT>` |
+| `--claude-system-prompt-file <PATH>` | `--system-prompt-file <PATH>` |
+| `--claude-append-system-prompt <TEXT>` | `--append-system-prompt <TEXT>` |
+| `--claude-append-system-prompt-file <PATH>` | `--append-system-prompt-file <PATH>` |
+| `--claude-max-turns <TURNS>` | `--max-turns <TURNS>` |
+| `--claude-max-budget-usd <USD>` | `--max-budget-usd <USD>` |
+
+Validation rules:
+
+- Choose only one resume mode: `--session`, `--claude-resume`, or `--claude-continue`.
+- `--claude-session-id` must be a valid UUID, starts or associates that specific new conversation, is recorded as a local `session.discovered` event even if Claude Code does not echo it, and cannot combine with resume or continue.
+- `--claude-fork-session` requires a resume or continue mode.
+- `--claude-system-prompt` and `--claude-system-prompt-file` are mutually exclusive.
+- `--claude-strict-mcp-config` requires at least one `--claude-mcp-config`.
+- `--claude-max-turns` must be greater than zero.
+
+Permission-sensitive behavior is direct. SVDO Meter never enables `bypassPermissions` or equivalent behavior automatically; if `--claude-permission-mode bypassPermissions` is supplied, it maps directly to Claude Code.
+
+Out of scope for this harness version: Claude Code background mode, cloud/environment dispatch, worktree/tmux management, plugin management, input stream driving, prompt suggestions, hook events, partial message streaming, subagent transcript forwarding, arbitrary passthrough flags, and interactive TUI sessions.
 
 ## Session Behavior
 

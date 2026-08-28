@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
-use meter_core::HarnessKind;
+use meter_core::{ClaudeRunOptions, CodexSandboxMode, HarnessKind};
 use meter_report::PricingConfig;
 
 #[derive(Debug, Parser)]
@@ -20,9 +20,9 @@ pub struct Cli {
 pub enum Commands {
     #[command(about = "Run measured agent CLI work")]
     #[command(
-        after_help = "Examples:\n  svdo-meter run --ticket ENG-142 --harness codex PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --prompt-file prompt.txt"
+        after_help = "Examples:\n  svdo-meter run --ticket ENG-142 --harness codex PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --prompt-file prompt.txt\n  svdo-meter run --ticket ENG-142 --harness codex --codex-profile default PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-sandbox workspace-write --codex-config model_reasoning_effort=high PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-yolo PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --model sonnet PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --claude-continue PROMPT"
     )]
-    Run(RunArgs),
+    Run(Box<RunArgs>),
     #[command(about = "Generate a local SVDO Trace report from JSONL telemetry")]
     #[command(
         after_help = "Examples:\n  svdo-meter report ENG-142\n  svdo-meter report --last 7d\n  svdo-meter report --label plan\n  svdo-meter report ENG-142 --format json\n  svdo-meter report --last 7d --format csv\n  svdo-meter report --pricing-file pricing.json\n\nReports read per-run streams from .svdo/meter/ under --workspace or the current directory. Without WORK, output is grouped by work identifier; records without one are shown as Unknown. Token output preserves input, output, cache, and total fields, with missing components shown distinctly from zero. Pricing rates are specified as cost per 1,000,000 tokens."
@@ -45,7 +45,7 @@ pub struct RunArgs {
     #[arg(long)]
     pub label: Option<String>,
 
-    /// Agent CLI harness to execute. v0.1 supports `codex`.
+    /// Agent CLI harness to execute. Supported: codex, claude.
     #[arg(long)]
     pub harness: HarnessKind,
 
@@ -57,9 +57,89 @@ pub struct RunArgs {
     #[arg(long)]
     pub session: Option<String>,
 
-    /// Harness-specific model selection. For Codex this is passed to Codex.
+    /// Harness-specific model selection. Passed to Codex or Claude Code.
     #[arg(long)]
     pub model: Option<String>,
+
+    /// Claude Code: continue the most recent conversation in this directory.
+    #[arg(long)]
+    pub claude_continue: bool,
+
+    /// Claude Code: resume a specific session by ID or name.
+    #[arg(long, value_name = "SESSION")]
+    pub claude_resume: Option<String>,
+
+    /// Claude Code: use a specific UUID for a new conversation.
+    #[arg(long, value_name = "UUID")]
+    pub claude_session_id: Option<String>,
+
+    /// Claude Code: fork the resumed or continued session.
+    #[arg(long)]
+    pub claude_fork_session: bool,
+
+    /// Claude Code: start in a permission mode such as default, acceptEdits, plan, auto, dontAsk, bypassPermissions, or manual.
+    #[arg(long, value_name = "MODE")]
+    pub claude_permission_mode: Option<String>,
+
+    /// Claude Code: tool rule to allow without prompting. Repeat for multiple rules.
+    #[arg(
+        long = "claude-allowed-tool",
+        alias = "claude-allowed-tools",
+        value_name = "RULE"
+    )]
+    pub claude_allowed_tools: Vec<String>,
+
+    /// Claude Code: tool rule to deny. Repeat for multiple rules.
+    #[arg(
+        long = "claude-disallowed-tool",
+        alias = "claude-disallowed-tools",
+        value_name = "RULE"
+    )]
+    pub claude_disallowed_tools: Vec<String>,
+
+    /// Claude Code: additional directory Claude may access. Repeat for multiple directories.
+    #[arg(long = "claude-add-dir", value_name = "PATH")]
+    pub claude_add_dirs: Vec<PathBuf>,
+
+    /// Claude Code: MCP config path or JSON string. Repeat for multiple configs.
+    #[arg(long = "claude-mcp-config", value_name = "PATH_OR_JSON")]
+    pub claude_mcp_configs: Vec<String>,
+
+    /// Claude Code: ignore MCP servers outside --claude-mcp-config.
+    #[arg(long)]
+    pub claude_strict_mcp_config: bool,
+
+    /// Claude Code: settings JSON file path or inline JSON string.
+    #[arg(long, value_name = "PATH_OR_JSON")]
+    pub claude_settings: Option<String>,
+
+    /// Claude Code: comma-separated setting sources to load, such as user,project.
+    #[arg(long, value_name = "SOURCES")]
+    pub claude_setting_sources: Option<String>,
+
+    /// Claude Code: replace the entire system prompt.
+    #[arg(long, value_name = "TEXT")]
+    pub claude_system_prompt: Option<String>,
+
+    /// Claude Code: replace the entire system prompt from a file.
+    #[arg(long, value_name = "PATH")]
+    pub claude_system_prompt_file: Option<PathBuf>,
+
+    /// Claude Code: append text to the default system prompt. Repeat for multiple additions.
+    #[arg(long = "claude-append-system-prompt", value_name = "TEXT")]
+    pub claude_append_system_prompts: Vec<String>,
+
+    /// Claude Code: append file contents to the default system prompt. Repeat for multiple files.
+    #[arg(long = "claude-append-system-prompt-file", value_name = "PATH")]
+    pub claude_append_system_prompt_files: Vec<PathBuf>,
+
+    /// Claude Code: maximum number of agentic turns in print mode.
+    #[arg(long, value_name = "TURNS")]
+    pub claude_max_turns: Option<u64>,
+
+    /// Claude Code: maximum USD budget in print mode.
+    #[arg(long, value_name = "USD")]
+    pub claude_max_budget_usd: Option<String>,
 
     /// Read the agent prompt from a UTF-8 text file.
     #[arg(long, value_name = "PATH", conflicts_with = "prompt")]
@@ -80,6 +160,26 @@ pub struct RunArgs {
     /// Emit live events in a pipe-friendly format. Supported: ndjson.
     #[arg(long, value_name = "FORMAT")]
     pub emit: Option<EmitFormat>,
+
+    /// Codex configuration profile name.
+    #[arg(long, value_name = "NAME", help_heading = "Codex options")]
+    pub codex_profile: Option<String>,
+
+    /// Codex sandbox mode.
+    #[arg(long, value_name = "MODE", help_heading = "Codex options")]
+    pub codex_sandbox: Option<CodexSandboxMode>,
+
+    /// Ask Codex to route approval requests through automatic review.
+    #[arg(long, help_heading = "Codex options")]
+    pub codex_approve_for_me: bool,
+
+    /// Ask Codex to bypass approvals and sandboxing. Dangerous.
+    #[arg(long, help_heading = "Codex options")]
+    pub codex_yolo: bool,
+
+    /// Codex config override as key=value. Repeatable.
+    #[arg(long, value_name = "key=value", help_heading = "Codex options")]
+    pub codex_config: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -274,6 +374,29 @@ pub fn resolve_prompt(args: &RunArgs) -> anyhow::Result<String> {
     unreachable!("clap requires either an inline prompt or --prompt-file")
 }
 
+pub fn claude_options(args: &RunArgs) -> ClaudeRunOptions {
+    ClaudeRunOptions {
+        continue_latest: args.claude_continue,
+        resume: args.claude_resume.clone(),
+        session_id: args.claude_session_id.clone(),
+        fork_session: args.claude_fork_session,
+        permission_mode: args.claude_permission_mode.clone(),
+        allowed_tools: args.claude_allowed_tools.clone(),
+        disallowed_tools: args.claude_disallowed_tools.clone(),
+        add_dirs: args.claude_add_dirs.clone(),
+        mcp_configs: args.claude_mcp_configs.clone(),
+        strict_mcp_config: args.claude_strict_mcp_config,
+        settings: args.claude_settings.clone(),
+        setting_sources: args.claude_setting_sources.clone(),
+        system_prompt: args.claude_system_prompt.clone(),
+        system_prompt_file: args.claude_system_prompt_file.clone(),
+        append_system_prompts: args.claude_append_system_prompts.clone(),
+        append_system_prompt_files: args.claude_append_system_prompt_files.clone(),
+        max_turns: args.claude_max_turns,
+        max_budget_usd: args.claude_max_budget_usd.clone(),
+    }
+}
+
 pub fn resolve_pricing(args: &ReportArgs) -> anyhow::Result<Option<PricingConfig>> {
     if let Some(path) = &args.pricing_file {
         let value = std::fs::read_to_string(path)
@@ -295,11 +418,11 @@ mod tests {
 
     use anyhow::Context;
     use clap::{CommandFactory, Parser, error::ErrorKind};
-    use meter_core::HarnessKind;
+    use meter_core::{CodexSandboxMode, HarnessKind};
 
     use super::{
-        Cli, Commands, EmitFormat, ReportFormat, RunSink, TelemetryCommands, resolve_pricing,
-        resolve_prompt,
+        Cli, Commands, EmitFormat, ReportFormat, RunSink, TelemetryCommands, claude_options,
+        resolve_pricing, resolve_prompt,
     };
 
     #[test]
@@ -368,6 +491,118 @@ mod tests {
         assert_eq!(args.sinks, vec![RunSink::Jsonl, RunSink::Stdout]);
         assert_eq!(args.emit, Some(EmitFormat::Ndjson));
         Ok(())
+    }
+
+    #[test]
+    fn parses_claude_specific_run_options() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "run",
+            "--ticket",
+            "ENG-CLAUDE",
+            "--harness",
+            "claude",
+            "--claude-continue",
+            "--claude-fork-session",
+            "--claude-permission-mode",
+            "plan",
+            "--claude-allowed-tool",
+            "Read",
+            "--claude-disallowed-tool",
+            "Bash(rm *)",
+            "--claude-add-dir",
+            "../lib",
+            "--claude-mcp-config",
+            "./mcp.json",
+            "--claude-strict-mcp-config",
+            "--claude-settings",
+            "./settings.json",
+            "--claude-setting-sources",
+            "user,project",
+            "--claude-append-system-prompt",
+            "Follow standards",
+            "--claude-max-turns",
+            "3",
+            "--claude-max-budget-usd",
+            "5.00",
+            "Do work",
+        ])?;
+        let args = match cli.command {
+            Commands::Run(args) => args,
+            Commands::Report(_) => panic!("expected run command"),
+            Commands::Telemetry(_) => panic!("expected run command"),
+        };
+        let options = claude_options(&args);
+
+        assert_eq!(args.harness, HarnessKind::Claude);
+        assert!(options.continue_latest);
+        assert!(options.fork_session);
+        assert_eq!(options.permission_mode.as_deref(), Some("plan"));
+        assert_eq!(options.allowed_tools, vec!["Read".to_owned()]);
+        assert_eq!(options.disallowed_tools, vec!["Bash(rm *)".to_owned()]);
+        assert_eq!(options.add_dirs, vec![std::path::PathBuf::from("../lib")]);
+        assert_eq!(options.mcp_configs, vec!["./mcp.json".to_owned()]);
+        assert!(options.strict_mcp_config);
+        assert_eq!(options.max_turns, Some(3));
+        assert_eq!(options.max_budget_usd.as_deref(), Some("5.00"));
+        Ok(())
+    }
+
+    #[test]
+    fn parses_codex_specific_run_flags() {
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "run",
+            "--ticket",
+            "ENG-142",
+            "--harness",
+            "codex",
+            "--codex-profile",
+            "default",
+            "--codex-sandbox",
+            "workspace-write",
+            "--codex-approve-for-me",
+            "--codex-yolo",
+            "--codex-config",
+            "model_reasoning_effort=high",
+            "--codex-config",
+            "features.foo=true",
+            "Implement ENG-142",
+        ])
+        .unwrap_or_else(|err| panic!("{err}"));
+
+        let Commands::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+        assert_eq!(args.codex_profile.as_deref(), Some("default"));
+        assert_eq!(args.codex_sandbox, Some(CodexSandboxMode::WorkspaceWrite));
+        assert!(args.codex_approve_for_me);
+        assert!(args.codex_yolo);
+        assert_eq!(
+            args.codex_config,
+            vec!["model_reasoning_effort=high", "features.foo=true"]
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_codex_sandbox_value() {
+        let result = Cli::try_parse_from([
+            "svdo-meter",
+            "run",
+            "--ticket",
+            "ENG-142",
+            "--harness",
+            "codex",
+            "--codex-sandbox",
+            "unsafe",
+            "Implement ENG-142",
+        ]);
+        let error = match result {
+            Ok(_) => panic!("expected parse error"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("unsupported Codex sandbox"));
     }
 
     #[test]

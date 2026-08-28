@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","session_id":"sess-claude-failed","model":"claude-sonnet-5"}
+{"type":"result","subtype":"error","session_id":"sess-claude-failed","is_error":true,"message":"maximum turns reached","num_turns":1}
