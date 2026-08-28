@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
-use meter_core::{ClaudeRunOptions, HarnessKind};
+use meter_core::{ClaudeRunOptions, CodexSandboxMode, HarnessKind};
 use meter_report::PricingConfig;
 
 #[derive(Debug, Parser)]
@@ -20,7 +20,7 @@ pub struct Cli {
 pub enum Commands {
     #[command(about = "Run measured agent CLI work")]
     #[command(
-        after_help = "Examples:\n  svdo-meter run --ticket ENG-142 --harness codex PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --model sonnet PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --claude-continue PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --prompt-file prompt.txt"
+        after_help = "Examples:\n  svdo-meter run --ticket ENG-142 --harness codex PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --prompt-file prompt.txt\n  svdo-meter run --ticket ENG-142 --harness codex --codex-profile default PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-sandbox workspace-write --codex-config model_reasoning_effort=high PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-yolo PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --model sonnet PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --claude-continue PROMPT"
     )]
     Run(Box<RunArgs>),
     #[command(about = "Generate a local SVDO Trace report from JSONL telemetry")]
@@ -160,6 +160,26 @@ pub struct RunArgs {
     /// Emit live events in a pipe-friendly format. Supported: ndjson.
     #[arg(long, value_name = "FORMAT")]
     pub emit: Option<EmitFormat>,
+
+    /// Codex configuration profile name.
+    #[arg(long, value_name = "NAME", help_heading = "Codex options")]
+    pub codex_profile: Option<String>,
+
+    /// Codex sandbox mode.
+    #[arg(long, value_name = "MODE", help_heading = "Codex options")]
+    pub codex_sandbox: Option<CodexSandboxMode>,
+
+    /// Ask Codex to route approval requests through automatic review.
+    #[arg(long, help_heading = "Codex options")]
+    pub codex_approve_for_me: bool,
+
+    /// Ask Codex to bypass approvals and sandboxing. Dangerous.
+    #[arg(long, help_heading = "Codex options")]
+    pub codex_yolo: bool,
+
+    /// Codex config override as key=value. Repeatable.
+    #[arg(long, value_name = "key=value", help_heading = "Codex options")]
+    pub codex_config: Vec<String>,
 }
 
 #[derive(Debug, Args)]
@@ -398,7 +418,7 @@ mod tests {
 
     use anyhow::Context;
     use clap::{CommandFactory, Parser, error::ErrorKind};
-    use meter_core::HarnessKind;
+    use meter_core::{CodexSandboxMode, HarnessKind};
 
     use super::{
         Cli, Commands, EmitFormat, ReportFormat, RunSink, TelemetryCommands, claude_options,
@@ -526,6 +546,63 @@ mod tests {
         assert_eq!(options.max_turns, Some(3));
         assert_eq!(options.max_budget_usd.as_deref(), Some("5.00"));
         Ok(())
+    }
+
+    #[test]
+    fn parses_codex_specific_run_flags() {
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "run",
+            "--ticket",
+            "ENG-142",
+            "--harness",
+            "codex",
+            "--codex-profile",
+            "default",
+            "--codex-sandbox",
+            "workspace-write",
+            "--codex-approve-for-me",
+            "--codex-yolo",
+            "--codex-config",
+            "model_reasoning_effort=high",
+            "--codex-config",
+            "features.foo=true",
+            "Implement ENG-142",
+        ])
+        .unwrap_or_else(|err| panic!("{err}"));
+
+        let Commands::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+        assert_eq!(args.codex_profile.as_deref(), Some("default"));
+        assert_eq!(args.codex_sandbox, Some(CodexSandboxMode::WorkspaceWrite));
+        assert!(args.codex_approve_for_me);
+        assert!(args.codex_yolo);
+        assert_eq!(
+            args.codex_config,
+            vec!["model_reasoning_effort=high", "features.foo=true"]
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_codex_sandbox_value() {
+        let result = Cli::try_parse_from([
+            "svdo-meter",
+            "run",
+            "--ticket",
+            "ENG-142",
+            "--harness",
+            "codex",
+            "--codex-sandbox",
+            "unsafe",
+            "Implement ENG-142",
+        ]);
+        let error = match result {
+            Ok(_) => panic!("expected parse error"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("unsupported Codex sandbox"));
     }
 
     #[test]

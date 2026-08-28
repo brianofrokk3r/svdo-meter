@@ -68,7 +68,31 @@ svdo-meter run \
   --prompt-file prompts/eng-142.md
 ```
 
+Codex-specific safe options:
+
+```bash
+svdo-meter run \
+  --ticket ENG-142 \
+  --harness codex \
+  --codex-profile default \
+  --codex-sandbox workspace-write \
+  --codex-config model_reasoning_effort=high \
+  "Implement ENG-142"
+```
+
+Dangerous Codex bypass mode:
+
+```bash
+svdo-meter run \
+  --ticket ENG-142 \
+  --harness codex \
+  --codex-yolo \
+  "Prototype ENG-142 in an externally sandboxed environment"
+```
+
 ### Arguments
+
+Common options:
 
 | Argument | Required | Description |
 |---|---:|---|
@@ -82,6 +106,16 @@ svdo-meter run \
 | `--model <MODEL>` | No | Harness-specific model configuration. Passed to Codex or Claude Code. |
 | `--sink <SINK>` | No | Event output sink. Repeatable. Supported values: `jsonl`, `stdout`. Durable `jsonl` telemetry remains enabled by default. |
 | `--emit <FORMAT>` | No | Convenience event stream format. Supported value: `ndjson`, equivalent to enabling the stdout sink. |
+
+Codex-specific options, valid only with `--harness codex`:
+
+| Argument | Description |
+|---|---|
+| `--codex-profile <NAME>` | Passes `--profile <NAME>` to Codex. |
+| `--codex-sandbox <MODE>` | Passes `--sandbox <MODE>` to Codex. Supported values: `read-only`, `workspace-write`, `danger-full-access`. |
+| `--codex-approve-for-me` | Passes `--approve-for-me` to Codex. |
+| `--codex-yolo` | Passes Codex's dangerous `--dangerously-bypass-approvals-and-sandbox` flag. No provider-neutral `--yolo` exists. |
+| `--codex-config <key=value>` | Passes a repeated `--config <key=value>` override to Codex. Keys and values must be non-empty. |
 
 SVDO Meter reads `--prompt-file` before starting the harness. Missing, unreadable, or non-UTF-8 files fail fast with a path-aware CLI error.
 
@@ -185,7 +219,7 @@ The Codex adapter invokes the CLI with explicit process arguments, not a shell c
 First run shape:
 
 ```text
-codex exec --json -C <workspace> <prompt>
+codex exec --json -C <workspace> [--model <model>] [--profile <profile>] [--sandbox <mode>] [--approve-for-me] [--dangerously-bypass-approvals-and-sandbox] [--config <key=value>...] <prompt>
 ```
 
 When `--prompt-file <path>` is used, SVDO Meter reads the file and passes the resolved text as `<prompt>`.
@@ -193,7 +227,7 @@ When `--prompt-file <path>` is used, SVDO Meter reads the file and passes the re
 Resume shape when a session is known:
 
 ```text
-codex exec --json -C <workspace> resume <session_id> <prompt>
+codex exec --json -C <workspace> [codex options...] resume <session_id> <prompt>
 ```
 
 Model shape:
@@ -201,6 +235,8 @@ Model shape:
 ```text
 codex exec --json -C <workspace> --model <model> <prompt>
 ```
+
+SVDO Meter validates Codex-specific flags before spawning Codex. Codex-specific flags are rejected with non-Codex harnesses.
 
 ## Claude Code Harness
 

@@ -41,7 +41,7 @@ pub fn engine(
     }
     match (harness, config) {
         (HarnessKind::Codex, HarnessConfig::Codex(config)) => {
-            engine.with_adapter(Arc::new(CodexAdapter::new(config.binary.clone())))
+            engine.with_adapter(Arc::new(CodexAdapter::new(config.clone())))
         }
         (HarnessKind::Claude, HarnessConfig::Claude(config)) => {
             engine.with_adapter(Arc::new(ClaudeAdapter::new(config.binary.clone())))
@@ -259,6 +259,11 @@ mod tests {
             prompt: Some("Do work".to_owned()),
             sinks,
             emit,
+            codex_profile: None,
+            codex_sandbox: None,
+            codex_approve_for_me: false,
+            codex_yolo: false,
+            codex_config: Vec::new(),
         }
     }
 }
