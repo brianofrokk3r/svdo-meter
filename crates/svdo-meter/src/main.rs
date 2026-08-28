@@ -35,6 +35,7 @@ async fn main() -> anyhow::Result<()> {
             let ticket_id = TicketId::new(args.ticket).context("invalid --ticket value")?;
             let session_override = args
                 .session
+                .clone()
                 .map(SessionId::new)
                 .transpose()
                 .context("invalid --session value")?;

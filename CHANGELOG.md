@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-28
+
+- Added a top-level GitHub installer script for installing prebuilt `svdo-meter` release binaries without cloning the repository.
+- Added installer platform mapping, SHA-256 checksum verification, `$HOME/.local/bin` default installation, `SVDO_METER_INSTALL_DIR` override support, and installed-binary verification with `svdo-meter --help`.
+- Added a main-branch GitHub Release workflow that builds Linux x86_64, macOS x86_64, and macOS arm64 archives with predictable asset names and checksum files.
+- Added lightweight shell validation for installer syntax and platform mapping to Rust CI.
+- Documented the raw GitHub install command, default install location, and supported installer platforms.
+- Added first-class Claude Code harness support for `svdo-meter run --harness claude`.
+- Added Claude Code command construction for non-interactive print mode with `--output-format stream-json` and `--verbose`.
+- Added mapped Claude Code options for model, permission mode, tool allow/deny rules, additional directories, MCP configuration, settings, system prompt customization, turn limits, and budget limits.
+- Added safe Claude Code continue/resume/session handling with validation for incompatible option combinations.
+- Added Claude Code stream JSON normalization for session discovery, model discovery, token usage, tool events, completion status, errors, and retained unknown events.
+- Registered the Claude adapter in CLI wiring while preserving Codex behavior and leaving unsupported Gemini wiring explicit.
+- Added Claude fixture-based adapter tests and CLI/config wiring tests that do not require live Claude Code execution.
+- Updated README and CLI/build documentation with Claude Code prerequisites, examples, supported flags, validation rules, and known limitations.
+- Updated Rust CI Clippy to run with `--all-features` while preserving workspace, all-targets, locked dependency, and denied-warning checks.
+
 ## 2026-08-24
 
 - Added Codex-specific `svdo-meter run` options: `--codex-profile`, `--codex-sandbox`, `--codex-approve-for-me`, `--codex-yolo`, and repeatable `--codex-config`.

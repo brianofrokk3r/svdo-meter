@@ -10,7 +10,7 @@ The v0.1 baseline centers on:
 
 - `svdo-meter run`
 - `svdo-meter telemetry`
-- the `codex` harness
+- the `codex` and `claude` harnesses
 - local per-run JSONL telemetry under `.svdo/meter/`
 - optional live stdout NDJSON event streaming from `svdo-meter run`
 - rebuildable session association from `session.discovered` events
@@ -36,6 +36,34 @@ cargo run -p svdo-meter -- report --help
 cargo run -p svdo-meter -- telemetry --help
 ```
 
+## Install From GitHub
+
+Install the latest published release binary without cloning the repository:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/brianofrokk3r/svdo-meter/main/install.sh | bash
+```
+
+The installer downloads the matching GitHub Release asset, verifies its SHA-256 checksum, installs `svdo-meter` to:
+
+```text
+$HOME/.local/bin
+```
+
+Override the install directory with `SVDO_METER_INSTALL_DIR`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/brianofrokk3r/svdo-meter/main/install.sh | SVDO_METER_INSTALL_DIR="$HOME/bin" bash
+```
+
+Supported installer platforms:
+
+- Linux x86_64
+- macOS x86_64
+- macOS arm64/aarch64
+
+After installation, the script verifies the binary with `svdo-meter --help`. If `$HOME/.local/bin` is not on `PATH`, add it before running `svdo-meter` from another directory.
+
 ## Compile
 
 Prerequisites:
@@ -43,6 +71,7 @@ Prerequisites:
 - Rust stable toolchain, preferably installed with `rustup`
 - Cargo on `PATH`
 - `codex` on `PATH` when running the Codex harness for real work
+- `claude` on `PATH` and authenticated when running the Claude Code harness for real work
 
 Build the debug binary:
 
@@ -100,6 +129,28 @@ Conceptual Codex invocation:
 codex exec --json -C ~/code/app "Implement the password reset flow described in ENG-142"
 ```
 
+## Run Claude Code With Telemetry
+
+Claude Code runs use non-interactive print mode with stream JSON so SVDO Meter can normalize live events without a TTY:
+
+```bash
+svdo-meter run \
+  --ticket ENG-142 \
+  --label "Add password reset flow" \
+  --harness claude \
+  --model sonnet \
+  --workspace ~/code/app \
+  "Implement the password reset flow described in ENG-142"
+```
+
+Conceptual Claude Code invocation:
+
+```bash
+claude -p "Implement the password reset flow described in ENG-142" --output-format stream-json --verbose --model sonnet
+```
+
+Supported Claude-specific options include `--claude-permission-mode`, `--claude-allowed-tool`, `--claude-disallowed-tool`, `--claude-add-dir`, `--claude-mcp-config`, `--claude-strict-mcp-config`, `--claude-settings`, `--claude-setting-sources`, system prompt flags, `--claude-max-turns`, and `--claude-max-budget-usd`.
+
 For longer or reusable instructions, read the prompt from a UTF-8 text file:
 
 ```bash
@@ -126,7 +177,7 @@ Equivalent sink selection is available with `--sink stdout`; `--sink jsonl` expl
 
 ## Resume A Known Session
 
-SVDO Meter records a `session.discovered` event when Codex exposes a session/thread ID. Later runs for the same ticket, harness, and workspace automatically use the latest known session when available.
+SVDO Meter records a `session.discovered` event when the selected harness exposes a session/thread ID. Later runs for the same ticket, harness, and workspace automatically use the latest known session when available.
 
 To override automatic lookup:
 
@@ -138,6 +189,14 @@ svdo-meter run \
   --session 019c8a42-f72... \
   --workspace ~/code/app \
   "Fix the remaining tests"
+```
+
+For Claude Code, `--session` maps to `claude --resume <session>` in print mode. Claude-specific controls are also available:
+
+```bash
+svdo-meter run --ticket ENG-142 --harness claude --claude-continue "Run the remaining tests"
+svdo-meter run --ticket ENG-142 --harness claude --claude-resume auth-refactor "Finish this PR"
+svdo-meter run --ticket ENG-142 --harness claude --claude-resume auth-refactor --claude-fork-session "Try an alternate fix"
 ```
 
 ## Select A Model
@@ -152,6 +211,8 @@ svdo-meter run \
   --workspace . \
   "Implement ENG-142"
 ```
+
+For Claude Code, `--model` maps to `claude --model` and accepts Claude Code aliases or full model identifiers supported by the installed Claude CLI.
 
 ## Estimate Token Cost
 
