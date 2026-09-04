@@ -10,3 +10,5 @@ specs
 !specs/
 !specs/**
 target
+specs/*
+docs/cross-cli-harness-options.md

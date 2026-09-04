@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
-use meter_core::{ClaudeRunOptions, CodexSandboxMode, HarnessKind};
+use meter_core::{ClaudeRunOptions, CodexSandboxMode, ExecutionPermissionMode, HarnessKind};
 use meter_report::PricingConfig;
 
 #[derive(Debug, Parser)]
@@ -20,7 +20,7 @@ pub struct Cli {
 pub enum Commands {
     #[command(about = "Run measured agent CLI work")]
     #[command(
-        after_help = "Examples:\n  svdo-meter run --ticket ENG-142 --harness codex PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --prompt-file prompt.txt\n  svdo-meter run --ticket ENG-142 --harness codex --codex-profile default PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-sandbox workspace-write --codex-config model_reasoning_effort=high PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-yolo PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --model sonnet PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --claude-continue PROMPT"
+        after_help = "Examples:\n  svdo-meter run --ticket ENG-142 --harness codex PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --prompt-file prompt.txt\n  svdo-meter run --ticket ENG-142 --harness codex --codex-profile default PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-sandbox workspace-write --codex-config model_reasoning_effort=high PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --dangerous-bypass PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-yolo PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --model sonnet PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --claude-continue PROMPT"
     )]
     Run(Box<RunArgs>),
     #[command(about = "Generate a local SVDO Trace report from JSONL telemetry")]
@@ -60,6 +60,10 @@ pub struct RunArgs {
     /// Harness-specific model selection. Passed to Codex or Claude Code.
     #[arg(long)]
     pub model: Option<String>,
+
+    /// Ask the selected harness to bypass approval and sandbox protections. Dangerous.
+    #[arg(long)]
+    pub dangerous_bypass: bool,
 
     /// Claude Code: continue the most recent conversation in this directory.
     #[arg(long)]
@@ -374,13 +378,20 @@ pub fn resolve_prompt(args: &RunArgs) -> anyhow::Result<String> {
     unreachable!("clap requires either an inline prompt or --prompt-file")
 }
 
-pub fn claude_options(args: &RunArgs) -> ClaudeRunOptions {
+pub fn claude_options(
+    args: &RunArgs,
+    execution_permission: ExecutionPermissionMode,
+) -> ClaudeRunOptions {
+    let permission_mode = args.claude_permission_mode.clone().or_else(|| {
+        (execution_permission == ExecutionPermissionMode::DangerousBypass)
+            .then(|| "bypassPermissions".to_owned())
+    });
     ClaudeRunOptions {
         continue_latest: args.claude_continue,
         resume: args.claude_resume.clone(),
         session_id: args.claude_session_id.clone(),
         fork_session: args.claude_fork_session,
-        permission_mode: args.claude_permission_mode.clone(),
+        permission_mode,
         allowed_tools: args.claude_allowed_tools.clone(),
         disallowed_tools: args.claude_disallowed_tools.clone(),
         add_dirs: args.claude_add_dirs.clone(),
@@ -418,7 +429,7 @@ mod tests {
 
     use anyhow::Context;
     use clap::{CommandFactory, Parser, error::ErrorKind};
-    use meter_core::{CodexSandboxMode, HarnessKind};
+    use meter_core::{CodexSandboxMode, ExecutionPermissionMode, HarnessKind};
 
     use super::{
         Cli, Commands, EmitFormat, ReportFormat, RunSink, TelemetryCommands, claude_options,
@@ -442,6 +453,7 @@ mod tests {
             "sess-123",
             "--model",
             "gpt-5",
+            "--dangerous-bypass",
             "Do work",
         ])?;
         let args = match cli.command {
@@ -459,6 +471,7 @@ mod tests {
         );
         assert_eq!(args.session.as_deref(), Some("sess-123"));
         assert_eq!(args.model.as_deref(), Some("gpt-5"));
+        assert!(args.dangerous_bypass);
         assert!(args.sinks.is_empty());
         assert_eq!(args.emit, None);
         assert_eq!(resolve_prompt(&args)?, "Do work");
@@ -532,7 +545,7 @@ mod tests {
             Commands::Report(_) => panic!("expected run command"),
             Commands::Telemetry(_) => panic!("expected run command"),
         };
-        let options = claude_options(&args);
+        let options = claude_options(&args, ExecutionPermissionMode::Standard);
 
         assert_eq!(args.harness, HarnessKind::Claude);
         assert!(options.continue_latest);

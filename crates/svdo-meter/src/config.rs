@@ -1,7 +1,7 @@
 use anyhow::{Context, bail};
 use meter_core::{
-    ClaudeConfig, CodexApprovalMode, CodexConfig, CodexConfigOverride, HarnessConfig, HarnessKind,
-    ModelName, RawEventRetention,
+    ClaudeConfig, CodexApprovalMode, CodexConfig, CodexConfigOverride, ExecutionPermissionMode,
+    HarnessConfig, HarnessKind, ModelName, RawEventRetention,
 };
 use meter_engine::HarnessOptions;
 use serde_json::Value;
@@ -13,6 +13,7 @@ pub struct RunHarnessConfig {
     pub config: HarnessConfig,
     pub model: Option<ModelName>,
     pub raw_event_retention: RawEventRetention,
+    pub execution_permission: ExecutionPermissionMode,
     pub options: HarnessOptions,
 }
 
@@ -22,6 +23,8 @@ pub fn harness_config(
 ) -> anyhow::Result<RunHarnessConfig> {
     validate_codex_option_scope(args)?;
     validate_claude_option_scope(args)?;
+    validate_dangerous_bypass(args)?;
+    let execution_permission = execution_permission(args);
 
     let config = match args.harness {
         HarnessKind::Codex => {
@@ -45,7 +48,8 @@ pub fn harness_config(
                 } else {
                     CodexApprovalMode::Manual
                 },
-                yolo: args.codex_yolo,
+                yolo: args.codex_yolo
+                    || execution_permission == ExecutionPermissionMode::DangerousBypass,
                 config_overrides,
                 ..CodexConfig::default()
             })
@@ -66,7 +70,7 @@ pub fn harness_config(
     };
     let options = match args.harness {
         HarnessKind::Claude => {
-            let value = serde_json::to_value(claude_options(args))?;
+            let value = serde_json::to_value(claude_options(args, execution_permission))?;
             match value {
                 Value::Object(values) => HarnessOptions::new(values),
                 _ => HarnessOptions::empty(),
@@ -78,8 +82,34 @@ pub fn harness_config(
         config,
         model,
         raw_event_retention,
+        execution_permission,
         options,
     })
+}
+
+fn execution_permission(args: &RunArgs) -> ExecutionPermissionMode {
+    if args.dangerous_bypass
+        || args.codex_yolo
+        || args.claude_permission_mode.as_deref() == Some("bypassPermissions")
+    {
+        ExecutionPermissionMode::DangerousBypass
+    } else {
+        ExecutionPermissionMode::Standard
+    }
+}
+
+fn validate_dangerous_bypass(args: &RunArgs) -> anyhow::Result<()> {
+    if args.dangerous_bypass && args.harness == HarnessKind::Gemini {
+        bail!("--dangerous-bypass is not supported for --harness gemini")
+    }
+    if args.dangerous_bypass
+        && args.harness == HarnessKind::Claude
+        && let Some(permission_mode) = &args.claude_permission_mode
+        && permission_mode != "bypassPermissions"
+    {
+        bail!("--dangerous-bypass conflicts with --claude-permission-mode {permission_mode}")
+    }
+    Ok(())
 }
 
 fn validate_codex_option_scope(args: &RunArgs) -> anyhow::Result<()> {
@@ -162,6 +192,10 @@ mod tests {
 
         assert_eq!(config.model, Some(model.clone()));
         assert_eq!(config.raw_event_retention, RawEventRetention::Disabled);
+        assert_eq!(
+            config.execution_permission,
+            ExecutionPermissionMode::Standard
+        );
         assert!(config.options.values().is_empty());
         assert_eq!(
             config.config,
@@ -185,6 +219,10 @@ mod tests {
 
         assert_eq!(config.model, Some(model.clone()));
         assert_eq!(config.raw_event_retention, RawEventRetention::Disabled);
+        assert_eq!(
+            config.execution_permission,
+            ExecutionPermissionMode::Standard
+        );
         assert_eq!(
             config.options.values().get("continue_latest"),
             Some(&serde_json::Value::Bool(true))
@@ -231,6 +269,96 @@ mod tests {
                 ],
                 ..CodexConfig::default()
             })
+        );
+        assert_eq!(
+            config.execution_permission,
+            ExecutionPermissionMode::DangerousBypass
+        );
+    }
+
+    #[test]
+    fn dangerous_bypass_maps_to_codex_yolo() {
+        let mut args = run_args(HarnessKind::Codex);
+        args.dangerous_bypass = true;
+
+        let config = harness_config(&args, None).unwrap_or_else(|err| panic!("{err}"));
+
+        assert_eq!(
+            config.execution_permission,
+            ExecutionPermissionMode::DangerousBypass
+        );
+        assert_eq!(
+            config.config,
+            HarnessConfig::Codex(CodexConfig {
+                raw_event_retention: RawEventRetention::Disabled,
+                yolo: true,
+                ..CodexConfig::default()
+            })
+        );
+    }
+
+    #[test]
+    fn dangerous_bypass_maps_to_claude_permission_mode() {
+        let mut args = run_args(HarnessKind::Claude);
+        args.dangerous_bypass = true;
+
+        let config = harness_config(&args, None).unwrap_or_else(|err| panic!("{err}"));
+
+        assert_eq!(
+            config.execution_permission,
+            ExecutionPermissionMode::DangerousBypass
+        );
+        assert_eq!(
+            config.options.values().get("permission_mode"),
+            Some(&serde_json::Value::String("bypassPermissions".to_owned()))
+        );
+    }
+
+    #[test]
+    fn claude_bypass_permission_mode_sets_neutral_execution_permission() {
+        let mut args = run_args(HarnessKind::Claude);
+        args.claude_permission_mode = Some("bypassPermissions".to_owned());
+
+        let config = harness_config(&args, None).unwrap_or_else(|err| panic!("{err}"));
+
+        assert_eq!(
+            config.execution_permission,
+            ExecutionPermissionMode::DangerousBypass
+        );
+    }
+
+    #[test]
+    fn rejects_conflicting_claude_permission_mode_for_dangerous_bypass() {
+        let mut args = run_args(HarnessKind::Claude);
+        args.dangerous_bypass = true;
+        args.claude_permission_mode = Some("plan".to_owned());
+
+        let error = match harness_config(&args, None) {
+            Ok(_) => panic!("expected harness config error"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("--dangerous-bypass conflicts with --claude-permission-mode plan")
+        );
+    }
+
+    #[test]
+    fn rejects_dangerous_bypass_for_gemini() {
+        let mut args = run_args(HarnessKind::Gemini);
+        args.dangerous_bypass = true;
+
+        let error = match harness_config(&args, None) {
+            Ok(_) => panic!("expected harness config error"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("--dangerous-bypass is not supported for --harness gemini")
         );
     }
 
@@ -289,6 +417,7 @@ mod tests {
             workspace: None,
             session: None,
             model: None,
+            dangerous_bypass: false,
             claude_continue: false,
             claude_resume: None,
             claude_session_id: None,

@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::{EventId, HarnessKind, ModelName, RunId, RunMetrics, SessionId, TicketId, TokenUsage};
+use crate::{
+    EventId, ExecutionPermissionMode, HarnessKind, ModelName, RunId, RunMetrics, SessionId,
+    TicketId, TokenUsage,
+};
 
 pub const SCHEMA_VERSION: u16 = 1;
 
@@ -142,6 +145,8 @@ impl EventPayload {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunStarted {
     pub prompt_recorded: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_permission: Option<ExecutionPermissionMode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

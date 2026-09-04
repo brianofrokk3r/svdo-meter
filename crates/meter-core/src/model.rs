@@ -51,6 +51,29 @@ impl Display for HarnessKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExecutionPermissionMode {
+    #[default]
+    Standard,
+    DangerousBypass,
+}
+
+impl ExecutionPermissionMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::DangerousBypass => "dangerous-bypass",
+        }
+    }
+}
+
+impl Display for ExecutionPermissionMode {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 #[error("unsupported harness `{0}`")]
 pub struct HarnessParseError(String);

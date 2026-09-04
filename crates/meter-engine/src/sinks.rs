@@ -208,6 +208,7 @@ mod tests {
             },
             EventPayload::RunStarted(RunStarted {
                 prompt_recorded: false,
+                execution_permission: None,
             }),
         )
     }
