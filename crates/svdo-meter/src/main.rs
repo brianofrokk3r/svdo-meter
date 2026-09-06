@@ -54,6 +54,7 @@ async fn main() -> anyhow::Result<()> {
                     session_override,
                     model: harness_config.model,
                     raw_event_retention: harness_config.raw_event_retention,
+                    execution_permission: harness_config.execution_permission,
                     options: harness_config.options,
                     prompt,
                 })

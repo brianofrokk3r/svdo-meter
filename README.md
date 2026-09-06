@@ -129,6 +129,8 @@ Conceptual Codex invocation:
 codex exec --json -C ~/code/app "Implement the password reset flow described in ENG-142"
 ```
 
+Use `--dangerous-bypass` only when the selected harness should bypass approval and sandbox protections. SVDO Meter records that posture on `run.started` telemetry.
+
 ## Run Claude Code With Telemetry
 
 Claude Code runs use non-interactive print mode with stream JSON so SVDO Meter can normalize live events without a TTY:

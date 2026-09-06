@@ -80,13 +80,13 @@ svdo-meter run \
   "Implement ENG-142"
 ```
 
-Dangerous Codex bypass mode:
+Dangerous bypass mode:
 
 ```bash
 svdo-meter run \
   --ticket ENG-142 \
   --harness codex \
-  --codex-yolo \
+  --dangerous-bypass \
   "Prototype ENG-142 in an externally sandboxed environment"
 ```
 
@@ -104,6 +104,7 @@ Common options:
 | `--workspace <PATH>` | No | Workspace directory passed to the harness and used as the base for `.svdo/meter/`. |
 | `--session <SESSION_ID>` | No | Explicit provider session/thread override for this run. |
 | `--model <MODEL>` | No | Harness-specific model configuration. Passed to Codex or Claude Code. |
+| `--dangerous-bypass` | No | Asks the selected harness to bypass approval and sandbox protections. Maps to Codex yolo behavior or Claude Code `bypassPermissions`. |
 | `--sink <SINK>` | No | Event output sink. Repeatable. Supported values: `jsonl`, `stdout`. Durable `jsonl` telemetry remains enabled by default. |
 | `--emit <FORMAT>` | No | Convenience event stream format. Supported value: `ndjson`, equivalent to enabling the stdout sink. |
 
@@ -114,7 +115,7 @@ Codex-specific options, valid only with `--harness codex`:
 | `--codex-profile <NAME>` | Passes `--profile <NAME>` to Codex. |
 | `--codex-sandbox <MODE>` | Passes `--sandbox <MODE>` to Codex. Supported values: `read-only`, `workspace-write`, `danger-full-access`. |
 | `--codex-approve-for-me` | Passes `--approve-for-me` to Codex. |
-| `--codex-yolo` | Passes Codex's dangerous `--dangerously-bypass-approvals-and-sandbox` flag. No provider-neutral `--yolo` exists. |
+| `--codex-yolo` | Compatibility spelling for Codex's dangerous `--dangerously-bypass-approvals-and-sandbox` flag. Also records canonical `dangerous-bypass` execution permission telemetry. |
 | `--codex-config <key=value>` | Passes a repeated `--config <key=value>` override to Codex. Keys and values must be non-empty. |
 
 SVDO Meter reads `--prompt-file` before starting the harness. Missing, unreadable, or non-UTF-8 files fail fast with a path-aware CLI error.
@@ -236,7 +237,7 @@ Model shape:
 codex exec --json -C <workspace> --model <model> <prompt>
 ```
 
-SVDO Meter validates Codex-specific flags before spawning Codex. Codex-specific flags are rejected with non-Codex harnesses.
+SVDO Meter validates Codex-specific flags before spawning Codex. Codex-specific flags are rejected with non-Codex harnesses. The provider-neutral `--dangerous-bypass` flag maps to the same Codex argv flag as `--codex-yolo`.
 
 ## Claude Code Harness
 
@@ -300,7 +301,7 @@ Validation rules:
 - `--claude-strict-mcp-config` requires at least one `--claude-mcp-config`.
 - `--claude-max-turns` must be greater than zero.
 
-Permission-sensitive behavior is direct. SVDO Meter never enables `bypassPermissions` or equivalent behavior automatically; if `--claude-permission-mode bypassPermissions` is supplied, it maps directly to Claude Code.
+Permission-sensitive behavior is direct. SVDO Meter never enables `bypassPermissions` or equivalent behavior automatically; if `--claude-permission-mode bypassPermissions` or provider-neutral `--dangerous-bypass` is supplied, it maps directly to Claude Code `--permission-mode bypassPermissions`.
 
 Out of scope for this harness version: Claude Code background mode, cloud/environment dispatch, worktree/tmux management, plugin management, input stream driving, prompt suggestions, hook events, partial message streaming, subagent transcript forwarding, arbitrary passthrough flags, and interactive TUI sessions.
 
@@ -344,6 +345,8 @@ Each JSONL line is one canonical event with common metadata such as:
 - `session_id`
 - `workspace`
 - `payload`
+
+For `run.started`, the payload includes `execution_permission` when SVDO Meter can determine the requested execution posture. Current values are `standard` and `dangerous-bypass`.
 
 ## Canonical Event Types
 

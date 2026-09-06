@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
-use meter_core::{EventPayload, TokenUsage};
+use meter_core::{EventPayload, ExecutionPermissionMode, TokenUsage};
 
 use crate::{ReportDiagnostic, TelemetryRecord};
 
@@ -132,7 +132,11 @@ impl InspectionRecord {
     fn payload_detail(&self) -> String {
         match &self.payload {
             EventPayload::RunStarted(started) => {
-                format!("prompt_recorded={}", started.prompt_recorded)
+                format!(
+                    "prompt_recorded={}, execution_permission={}",
+                    started.prompt_recorded,
+                    display_execution_permission(started.execution_permission)
+                )
             }
             EventPayload::SessionDiscovered(discovered) => {
                 format!("source={}", discovered.source)
@@ -483,6 +487,12 @@ fn display_option(value: Option<&str>) -> String {
     value.unwrap_or("Unavailable").to_owned()
 }
 
+fn display_execution_permission(value: Option<ExecutionPermissionMode>) -> &'static str {
+    value
+        .map(ExecutionPermissionMode::as_str)
+        .unwrap_or("Unavailable")
+}
+
 fn display_list(values: &[String]) -> String {
     if values.is_empty() {
         "Unavailable".to_owned()
@@ -562,6 +572,7 @@ mod tests {
 
         let run_output = render_inspection(&inspection, "018f6f1b-97f1-7c04-9a96-111111111111");
         assert!(run_output.contains("run.started"));
+        assert!(run_output.contains("execution_permission=dangerous-bypass"));
         assert!(run_output.contains("session.discovered"));
         assert!(run_output.contains("run.completed"));
 

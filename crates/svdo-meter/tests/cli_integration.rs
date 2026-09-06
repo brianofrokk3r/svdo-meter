@@ -20,9 +20,10 @@ fn help_succeeds_for_documented_command_paths() {
         "Run identifier or provider session identifier",
     );
     assert_success_contains(&["run", "--help"], "--codex-profile");
+    assert_success_contains(&["run", "--help"], "--dangerous-bypass");
     assert_success_contains(
         &["run", "--help"],
-        "svdo-meter run --ticket ENG-142 --harness codex --codex-yolo PROMPT",
+        "svdo-meter run --ticket ENG-142 --harness codex --dangerous-bypass PROMPT",
     );
 }
 

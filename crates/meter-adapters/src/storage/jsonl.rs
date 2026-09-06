@@ -203,6 +203,7 @@ mod tests {
             context,
             EventPayload::RunStarted(RunStarted {
                 prompt_recorded: false,
+                execution_permission: None,
             }),
         );
 
@@ -243,12 +244,14 @@ mod tests {
             first_context,
             EventPayload::RunStarted(RunStarted {
                 prompt_recorded: false,
+                execution_permission: None,
             }),
         );
         let second = MeterEvent::new(
             second_context,
             EventPayload::RunStarted(RunStarted {
                 prompt_recorded: false,
+                execution_permission: None,
             }),
         );
 
