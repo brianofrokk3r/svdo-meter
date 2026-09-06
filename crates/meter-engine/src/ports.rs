@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use meter_core::{
-    EventContext, HarnessKind, MeterEvent, ModelName, RawEventRetention, RunMetrics, SessionId,
-    TicketId,
+    EventContext, ExecutionPermissionMode, HarnessKind, MeterEvent, ModelName, RawEventRetention,
+    RunMetrics, SessionId, TicketId,
 };
 use serde_json::{Map, Value};
 use thiserror::Error;
@@ -37,6 +37,7 @@ pub struct HarnessRunRequest {
     pub session_id: Option<SessionId>,
     pub model: Option<ModelName>,
     pub raw_event_retention: RawEventRetention,
+    pub execution_permission: ExecutionPermissionMode,
     pub options: HarnessOptions,
 }
 

@@ -209,6 +209,7 @@ mod tests {
                 session_override: None,
                 model: None,
                 raw_event_retention: RawEventRetention::Disabled,
+                execution_permission: meter_core::ExecutionPermissionMode::Standard,
                 options: HarnessOptions::empty(),
                 prompt: "Do work".to_owned(),
             })
@@ -237,6 +238,7 @@ mod tests {
             workspace: None,
             session: None,
             model: None,
+            dangerous_bypass: false,
             claude_continue: false,
             claude_resume: None,
             claude_session_id: None,

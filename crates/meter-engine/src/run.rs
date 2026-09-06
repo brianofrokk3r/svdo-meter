@@ -4,8 +4,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use meter_core::{
-    EventContext, EventPayload, HarnessKind, MeterEvent, ModelName, RawEventRetention,
-    RunCompleted, RunFailed, RunId, RunMetrics, RunStarted, SessionDiscovered, SessionId, TicketId,
+    EventContext, EventPayload, ExecutionPermissionMode, HarnessKind, MeterEvent, ModelName,
+    RawEventRetention, RunCompleted, RunFailed, RunId, RunMetrics, RunStarted, SessionDiscovered,
+    SessionId, TicketId,
 };
 use thiserror::Error;
 use tokio::sync::mpsc;
@@ -24,6 +25,7 @@ pub struct RunRequest {
     pub session_override: Option<SessionId>,
     pub model: Option<ModelName>,
     pub raw_event_retention: RawEventRetention,
+    pub execution_permission: ExecutionPermissionMode,
     pub options: HarnessOptions,
     pub prompt: String,
 }
@@ -108,6 +110,7 @@ impl RunEngine {
             base_context.clone(),
             EventPayload::RunStarted(RunStarted {
                 prompt_recorded: false,
+                execution_permission: Some(request.execution_permission),
             }),
         );
         self.event_bus.emit(&start_event).await?;
@@ -137,6 +140,7 @@ impl RunEngine {
             session_id: selected_session.clone(),
             model: request.model,
             raw_event_retention: request.raw_event_retention,
+            execution_permission: request.execution_permission,
             options: request.options,
         };
         let harness_result = adapter.run(harness_request, tx.clone()).await;
@@ -294,6 +298,7 @@ mod tests {
         observed_sessions: Arc<Mutex<Vec<Option<SessionId>>>>,
         observed_models: Arc<Mutex<Vec<Option<ModelName>>>>,
         observed_retention: Arc<Mutex<Vec<RawEventRetention>>>,
+        observed_permissions: Arc<Mutex<Vec<ExecutionPermissionMode>>>,
         result: HarnessRunResult,
     }
 
@@ -355,6 +360,10 @@ mod tests {
                 .lock()
                 .unwrap_or_else(|err| panic!("{err}"))
                 .push(request.raw_event_retention.clone());
+            self.observed_permissions
+                .lock()
+                .unwrap_or_else(|err| panic!("{err}"))
+                .push(request.execution_permission);
             if let Some(session_id) = &self.result.session_id {
                 events
                     .send(MeterEvent::new(
@@ -379,6 +388,7 @@ mod tests {
             session_override,
             model: None,
             raw_event_retention: RawEventRetention::Disabled,
+            execution_permission: ExecutionPermissionMode::Standard,
             options: HarnessOptions::empty(),
             prompt: "Do work".to_owned(),
         }
@@ -395,6 +405,7 @@ mod tests {
             observed_sessions: Arc::clone(&observed),
             observed_models,
             observed_retention,
+            observed_permissions: Arc::new(Mutex::new(Vec::new())),
             result: HarnessRunResult {
                 success: true,
                 session_id: Some(session_id.clone()),
@@ -442,6 +453,7 @@ mod tests {
             observed_sessions: Arc::new(Mutex::new(Vec::new())),
             observed_models: Arc::new(Mutex::new(Vec::new())),
             observed_retention: Arc::new(Mutex::new(Vec::new())),
+            observed_permissions: Arc::new(Mutex::new(Vec::new())),
             result: HarnessRunResult {
                 success: true,
                 ..HarnessRunResult::default()
@@ -485,6 +497,7 @@ mod tests {
             observed_sessions: Arc::new(Mutex::new(Vec::new())),
             observed_models: Arc::new(Mutex::new(Vec::new())),
             observed_retention: Arc::new(Mutex::new(Vec::new())),
+            observed_permissions: Arc::new(Mutex::new(Vec::new())),
             result: HarnessRunResult {
                 success: true,
                 ..HarnessRunResult::default()
@@ -539,6 +552,7 @@ mod tests {
             observed_sessions: Arc::clone(&observed),
             observed_models,
             observed_retention,
+            observed_permissions: Arc::new(Mutex::new(Vec::new())),
             result: HarnessRunResult {
                 success: true,
                 session_id: Some(session_id.clone()),
@@ -572,6 +586,7 @@ mod tests {
             observed_sessions: Arc::clone(&observed),
             observed_models,
             observed_retention,
+            observed_permissions: Arc::new(Mutex::new(Vec::new())),
             result: HarnessRunResult {
                 success: true,
                 session_id: Some(override_session.clone()),
@@ -600,10 +615,12 @@ mod tests {
         let observed = Arc::new(Mutex::new(Vec::new()));
         let observed_models = Arc::new(Mutex::new(Vec::new()));
         let observed_retention = Arc::new(Mutex::new(Vec::new()));
+        let observed_permissions = Arc::new(Mutex::new(Vec::new()));
         let adapter = Arc::new(FakeAdapter {
             observed_sessions: observed,
             observed_models: Arc::clone(&observed_models),
             observed_retention: Arc::clone(&observed_retention),
+            observed_permissions: Arc::clone(&observed_permissions),
             result: HarnessRunResult {
                 success: true,
                 ..HarnessRunResult::default()
@@ -634,6 +651,13 @@ mod tests {
                 .as_slice(),
             &[RawEventRetention::Full]
         );
+        assert_eq!(
+            observed_permissions
+                .lock()
+                .unwrap_or_else(|err| panic!("{err}"))
+                .as_slice(),
+            &[ExecutionPermissionMode::Standard]
+        );
         let start = store
             .stream(EventQuery::default())
             .await
@@ -642,6 +666,52 @@ mod tests {
             .find(|event| event.event_type == EventType::RunStarted)
             .unwrap_or_else(|| panic!("missing run start event"));
         assert_eq!(start.requested_model, Some(model));
+    }
+
+    #[tokio::test]
+    async fn records_execution_permission_on_run_start_and_adapter_request() {
+        let store = Arc::new(MemoryStore::default());
+        let observed_permissions = Arc::new(Mutex::new(Vec::new()));
+        let adapter = Arc::new(FakeAdapter {
+            observed_sessions: Arc::new(Mutex::new(Vec::new())),
+            observed_models: Arc::new(Mutex::new(Vec::new())),
+            observed_retention: Arc::new(Mutex::new(Vec::new())),
+            observed_permissions: Arc::clone(&observed_permissions),
+            result: HarnessRunResult {
+                success: true,
+                ..HarnessRunResult::default()
+            },
+        });
+        let engine = RunEngine::new(store.clone()).with_adapter(adapter);
+        let mut request = run_request("ENG-DANGER", None);
+        request.execution_permission = ExecutionPermissionMode::DangerousBypass;
+
+        let _ = engine
+            .run(request)
+            .await
+            .unwrap_or_else(|err| panic!("{err}"));
+
+        assert_eq!(
+            observed_permissions
+                .lock()
+                .unwrap_or_else(|err| panic!("{err}"))
+                .as_slice(),
+            &[ExecutionPermissionMode::DangerousBypass]
+        );
+        let start = store
+            .stream(EventQuery::default())
+            .await
+            .unwrap_or_else(|err| panic!("{err}"))
+            .into_iter()
+            .find(|event| event.event_type == EventType::RunStarted)
+            .unwrap_or_else(|| panic!("missing run start event"));
+        let EventPayload::RunStarted(started) = start.payload else {
+            panic!("expected run started payload");
+        };
+        assert_eq!(
+            started.execution_permission,
+            Some(ExecutionPermissionMode::DangerousBypass)
+        );
     }
 
     #[tokio::test]
@@ -654,6 +724,7 @@ mod tests {
             observed_sessions: observed,
             observed_models,
             observed_retention,
+            observed_permissions: Arc::new(Mutex::new(Vec::new())),
             result: HarnessRunResult {
                 success: false,
                 exit_code: Some(2),
@@ -690,6 +761,7 @@ mod tests {
             observed_sessions: observed,
             observed_models,
             observed_retention,
+            observed_permissions: Arc::new(Mutex::new(Vec::new())),
             result: HarnessRunResult {
                 success: true,
                 ..HarnessRunResult::default()
