@@ -1,0 +1,20 @@
+id: telemetry-reporting
+task: |
+  Confirm telemetry and report surfaces remain present for local SVDO Meter usage.
+checks:
+  - id: telemetry-fixture
+    type: command
+    command: test -f tests/fixtures/telemetry/valid.jsonl
+    required: true
+    weight: 0.3
+  - id: report-fixture
+    type: command
+    command: test -f tests/fixtures/report/single_work.jsonl
+    required: true
+    weight: 0.3
+  - id: report-renderers
+    type: command
+    command: grep -q "render_json" crates/svdo-meter/src/main.rs
+    required: false
+    weight: 0.4
+threshold: 0.75

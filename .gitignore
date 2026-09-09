@@ -2,6 +2,11 @@
 .agents
 .codex
 .svdo
+!.svdo/
+!.svdo/evals/
+!.svdo/evals/**
+!.svdo/standards/
+!.svdo/standards/**
 .specify
 specs
 !.specify/
@@ -11,4 +16,6 @@ specs
 !specs/**
 target
 specs/*
+!specs/d085c8af-add-first-class-eval-framework-for-repos/
+!specs/d085c8af-add-first-class-eval-framework-for-repos/**
 docs/cross-cli-harness-options.md

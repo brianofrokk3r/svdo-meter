@@ -11,6 +11,8 @@ fn help_succeeds_for_documented_command_paths() {
     assert_success_contains(&["--help"], "svdo-meter");
     assert_success_contains(&["--help"], "telemetry");
     assert_success_contains(&["run", "--help"], "svdo-meter run --ticket");
+    assert_success_contains(&["eval", "--help"], "Run one eval");
+    assert_success_contains(&["eval", "run", "--help"], "svdo-meter eval run");
     assert_success_contains(&["report", "--help"], "svdo-meter report --last 7d");
     assert_success_contains(&["telemetry", "--help"], "sessions");
     assert_success_contains(&["telemetry", "sessions", "--help"], "List discovered");
@@ -25,6 +27,178 @@ fn help_succeeds_for_documented_command_paths() {
         &["run", "--help"],
         "svdo-meter run --ticket ENG-142 --harness codex --dangerous-bypass PROMPT",
     );
+}
+
+#[test]
+fn eval_run_specific_definition_renders_terminal_output() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-eval-specific-integration");
+    write_eval_definition(
+        &workspace,
+        "smoke.yaml",
+        r#"
+id: smoke
+task: Check local fixture.
+checks:
+  - id: has-marker
+    type: command
+    command: test -f marker.txt
+    required: true
+    weight: 1.0
+threshold: 1.0
+"#,
+    )?;
+    fs::write(workspace.join("marker.txt"), "ok")?;
+
+    let output = run_svdo_meter(&["eval", "run", "smoke", "--workspace", path_str(&workspace)?]);
+
+    assert!(output.status.success());
+    assert_stdout_contains(&output, "SVDO Eval");
+    assert_stdout_contains(&output, "smoke");
+    assert_stdout_contains(&output, "PASS");
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn eval_run_all_definitions_renders_json_output() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-eval-all-integration");
+    write_eval_definition(
+        &workspace,
+        "one.yaml",
+        r#"
+id: one
+task: First eval.
+checks:
+  - id: pass
+    type: command
+    command: "true"
+    required: true
+threshold: 1.0
+"#,
+    )?;
+    write_eval_definition(
+        &workspace,
+        "two.yaml",
+        r#"
+id: two
+task: Second eval.
+checks:
+  - id: pass
+    type: command
+    command: "true"
+    required: true
+threshold: 1.0
+"#,
+    )?;
+
+    let output = run_svdo_meter(&[
+        "eval",
+        "run",
+        "--workspace",
+        path_str(&workspace)?,
+        "--format",
+        "json",
+    ]);
+
+    assert!(output.status.success());
+    assert_stdout_contains(&output, "\"passed\": true");
+    assert_stdout_contains(&output, "\"id\": \"one\"");
+    assert_stdout_contains(&output, "\"id\": \"two\"");
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn eval_required_failure_exits_nonzero_and_reports_reason() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-eval-fail-integration");
+    write_eval_definition(
+        &workspace,
+        "required-failure.yaml",
+        r#"
+id: required-failure
+task: Demonstrate hard failure.
+checks:
+  - id: required
+    type: command
+    command: "printf required-failed >&2; exit 7"
+    required: true
+    weight: 0.1
+  - id: optional
+    type: command
+    command: "true"
+    required: false
+    weight: 0.9
+threshold: 0.5
+"#,
+    )?;
+
+    let output = run_svdo_meter(&[
+        "eval",
+        "run",
+        "required-failure.yaml",
+        "--workspace",
+        path_str(&workspace)?,
+    ]);
+
+    assert!(!output.status.success());
+    assert_stdout_contains(&output, "FAIL");
+    assert_stdout_contains(&output, "Failed checks: required");
+    assert_stdout_contains(&output, "required-failed");
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn eval_csv_output_is_pipe_friendly() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-eval-csv-integration");
+    write_eval_definition(
+        &workspace,
+        "csv.yaml",
+        r#"
+id: csv
+task: Render CSV.
+checks:
+  - id: pass
+    type: command
+    command: "true"
+    required: true
+threshold: 1.0
+"#,
+    )?;
+
+    let output = run_svdo_meter(&[
+        "eval",
+        "run",
+        "csv",
+        "--workspace",
+        path_str(&workspace)?,
+        "--format",
+        "csv",
+    ]);
+
+    assert!(output.status.success());
+    assert_stdout_contains(&output, "eval_id,eval_passed,overall_score");
+    assert_stdout_contains(&output, "csv,true,1.0000");
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn repo_sample_evals_are_runnable() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let output = run_svdo_meter(&[
+        "eval",
+        "run",
+        "--workspace",
+        path_str(&repo_root).expect("repo root path must be UTF-8"),
+        "--format",
+        "json",
+    ]);
+
+    assert!(output.status.success());
+    assert_stdout_contains(&output, "\"id\": \"rust-cli-smoke\"");
+    assert_stdout_contains(&output, "\"id\": \"fixture-integrity\"");
+    assert_stdout_contains(&output, "\"harness\": \"judge-unavailable\"");
 }
 
 #[test]
@@ -210,6 +384,12 @@ fn write_workspace_telemetry_streams(workspace: &Path, contents: &str) -> std::i
         )?;
     }
     Ok(())
+}
+
+fn write_eval_definition(workspace: &Path, file_name: &str, contents: &str) -> std::io::Result<()> {
+    let eval_dir = workspace.join(".svdo").join("evals");
+    fs::create_dir_all(&eval_dir)?;
+    fs::write(eval_dir.join(file_name), contents)
 }
 
 fn path_str(path: &Path) -> std::io::Result<&str> {

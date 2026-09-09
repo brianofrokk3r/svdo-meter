@@ -595,6 +595,7 @@ dependencies = [
  "meter-core",
  "meter-engine",
  "meter-report",
+ "serde",
  "serde_json",
  "tokio",
  "tracing-subscriber",

@@ -1,0 +1,19 @@
+id: repository-standards
+task: |
+  Check that repository guidance and Spec Kit memory remain available.
+checks:
+  - id: agents-file
+    type: command
+    command: test -f AGENTS.md
+    required: true
+    weight: 0.25
+  - id: constitution
+    type: command
+    command: test -f .specify/memory/constitution.md
+    required: true
+    weight: 0.25
+  - id: alignment-standard
+    type: judge
+    standard: repository-alignment
+    weight: 0.5
+threshold: 0.5
