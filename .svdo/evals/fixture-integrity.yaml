@@ -1,0 +1,20 @@
+id: fixture-integrity
+task: |
+  Confirm fixture-backed tests have the local data they need.
+checks:
+  - id: codex-fixtures
+    type: command
+    command: test -d tests/fixtures/codex
+    required: true
+    weight: 0.25
+  - id: claude-fixtures
+    type: command
+    command: test -d tests/fixtures/claude
+    required: true
+    weight: 0.25
+  - id: integration-tests
+    type: command
+    command: test -f crates/svdo-meter/tests/cli_integration.rs
+    required: false
+    weight: 0.5
+threshold: 0.75

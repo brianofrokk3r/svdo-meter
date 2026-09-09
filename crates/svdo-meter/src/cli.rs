@@ -18,6 +18,11 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    #[command(about = "Run repository alignment evals")]
+    #[command(
+        after_help = "Examples:\n  svdo-meter eval run\n  svdo-meter eval run add-account-endpoint\n  svdo-meter eval run add-account-endpoint --format json\n  svdo-meter eval run smoke.yaml --format csv\n\nEval definitions are read from .svdo/evals/ under --workspace or the current directory. Referenced standards are read from .svdo/standards/."
+    )]
+    Eval(EvalArgs),
     #[command(about = "Run measured agent CLI work")]
     #[command(
         after_help = "Examples:\n  svdo-meter run --ticket ENG-142 --harness codex PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --prompt-file prompt.txt\n  svdo-meter run --ticket ENG-142 --harness codex --codex-profile default PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-sandbox workspace-write --codex-config model_reasoning_effort=high PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --dangerous-bypass PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-yolo PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --model sonnet PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --claude-continue PROMPT"
@@ -33,6 +38,36 @@ pub enum Commands {
         after_help = "Examples:\n  svdo-meter telemetry sessions\n  svdo-meter telemetry runs\n  svdo-meter telemetry inspect 018f6f1b-97f1-7c04-9a96-111111111111\n  svdo-meter telemetry inspect sess-abc123\n\nTelemetry inspection reads per-run streams from .svdo/meter/ under --workspace or the current directory. Malformed JSONL lines are reported as diagnostics while valid records remain inspectable."
     )]
     Telemetry(TelemetryArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct EvalArgs {
+    #[command(subcommand)]
+    pub command: EvalCommands,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EvalCommands {
+    /// Run one eval by id or file name, or all evals when omitted.
+    #[command(
+        after_help = "Examples:\n  svdo-meter eval run\n  svdo-meter eval run add-account-endpoint\n  svdo-meter eval run add-account-endpoint --format json\n  svdo-meter eval run smoke.yaml --format csv"
+    )]
+    Run(EvalRunArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct EvalRunArgs {
+    /// Eval id, file stem, or file name. When omitted, all evals run.
+    #[arg(value_name = "EVAL")]
+    pub eval: Option<String>,
+
+    /// Workspace containing `.svdo/evals/`. Defaults to the current directory.
+    #[arg(long)]
+    pub workspace: Option<PathBuf>,
+
+    /// Output format for eval results.
+    #[arg(long, default_value_t = ReportFormat::Terminal)]
+    pub format: ReportFormat,
 }
 
 #[derive(Debug, Args)]
@@ -432,8 +467,8 @@ mod tests {
     use meter_core::{CodexSandboxMode, ExecutionPermissionMode, HarnessKind};
 
     use super::{
-        Cli, Commands, EmitFormat, ReportFormat, RunSink, TelemetryCommands, claude_options,
-        resolve_pricing, resolve_prompt,
+        Cli, Commands, EmitFormat, EvalCommands, ReportFormat, RunSink, TelemetryCommands,
+        claude_options, resolve_pricing, resolve_prompt,
     };
 
     #[test]
@@ -456,10 +491,8 @@ mod tests {
             "--dangerous-bypass",
             "Do work",
         ])?;
-        let args = match cli.command {
-            Commands::Run(args) => args,
-            Commands::Report(_) => panic!("expected run command"),
-            Commands::Telemetry(_) => panic!("expected run command"),
+        let Commands::Run(args) = cli.command else {
+            panic!("expected run command");
         };
 
         assert_eq!(args.ticket, "ENG-142");
@@ -495,10 +528,8 @@ mod tests {
             "ndjson",
             "Do work",
         ])?;
-        let args = match cli.command {
-            Commands::Run(args) => args,
-            Commands::Report(_) => panic!("expected run command"),
-            Commands::Telemetry(_) => panic!("expected run command"),
+        let Commands::Run(args) = cli.command else {
+            panic!("expected run command");
         };
 
         assert_eq!(args.sinks, vec![RunSink::Jsonl, RunSink::Stdout]);
@@ -540,10 +571,8 @@ mod tests {
             "5.00",
             "Do work",
         ])?;
-        let args = match cli.command {
-            Commands::Run(args) => args,
-            Commands::Report(_) => panic!("expected run command"),
-            Commands::Telemetry(_) => panic!("expected run command"),
+        let Commands::Run(args) = cli.command else {
+            panic!("expected run command");
         };
         let options = claude_options(&args, ExecutionPermissionMode::Standard);
 
@@ -667,10 +696,8 @@ mod tests {
             path.to_str()
                 .context("temporary prompt path must be UTF-8")?,
         ])?;
-        let args = match cli.command {
-            Commands::Run(args) => args,
-            Commands::Report(_) => panic!("expected run command"),
-            Commands::Telemetry(_) => panic!("expected run command"),
+        let Commands::Run(args) = cli.command else {
+            panic!("expected run command");
         };
 
         assert_eq!(resolve_prompt(&args)?, "Review the diff\nThen run tests\n");
@@ -692,10 +719,8 @@ mod tests {
             path.to_str()
                 .context("temporary prompt path must be UTF-8")?,
         ])?;
-        let args = match cli.command {
-            Commands::Run(args) => args,
-            Commands::Report(_) => panic!("expected run command"),
-            Commands::Telemetry(_) => panic!("expected run command"),
+        let Commands::Run(args) = cli.command else {
+            panic!("expected run command");
         };
 
         let error = resolve_prompt(&args)
@@ -779,10 +804,8 @@ mod tests {
             "--workspace",
             "/tmp/workspace",
         ])?;
-        let args = match cli.command {
-            Commands::Report(args) => args,
-            Commands::Run(_) => panic!("expected report command"),
-            Commands::Telemetry(_) => panic!("expected report command"),
+        let Commands::Report(args) = cli.command else {
+            panic!("expected report command");
         };
 
         assert_eq!(args.work.as_deref(), Some("ENG-142"));
@@ -797,10 +820,8 @@ mod tests {
     #[test]
     fn parses_report_work_and_json_format() -> anyhow::Result<()> {
         let cli = Cli::try_parse_from(["svdo-meter", "report", "ENG-142", "--format", "json"])?;
-        let args = match cli.command {
-            Commands::Report(args) => args,
-            Commands::Run(_) => panic!("expected report command"),
-            Commands::Telemetry(_) => panic!("expected report command"),
+        let Commands::Report(args) = cli.command else {
+            panic!("expected report command");
         };
 
         assert_eq!(args.work.as_deref(), Some("ENG-142"));
@@ -811,10 +832,8 @@ mod tests {
     #[test]
     fn parses_report_csv_format() -> anyhow::Result<()> {
         let cli = Cli::try_parse_from(["svdo-meter", "report", "--format", "csv"])?;
-        let args = match cli.command {
-            Commands::Report(args) => args,
-            Commands::Run(_) => panic!("expected report command"),
-            Commands::Telemetry(_) => panic!("expected report command"),
+        let Commands::Report(args) = cli.command else {
+            panic!("expected report command");
         };
 
         assert_eq!(args.work, None);
@@ -825,10 +844,8 @@ mod tests {
     #[test]
     fn parses_report_last_duration_and_label() -> anyhow::Result<()> {
         let cli = Cli::try_parse_from(["svdo-meter", "report", "--last", "7d", "--label", "plan"])?;
-        let args = match cli.command {
-            Commands::Report(args) => args,
-            Commands::Run(_) => panic!("expected report command"),
-            Commands::Telemetry(_) => panic!("expected report command"),
+        let Commands::Report(args) = cli.command else {
+            panic!("expected report command");
         };
 
         assert_eq!(args.work, None);
@@ -854,10 +871,8 @@ mod tests {
             path.to_str()
                 .context("temporary pricing path must be UTF-8")?,
         ])?;
-        let args = match cli.command {
-            Commands::Report(args) => args,
-            Commands::Run(_) => panic!("expected report command"),
-            Commands::Telemetry(_) => panic!("expected report command"),
+        let Commands::Report(args) = cli.command else {
+            panic!("expected report command");
         };
 
         let pricing = resolve_pricing(&args)?.context("expected pricing")?;
@@ -925,6 +940,46 @@ mod tests {
             },
             _ => panic!("expected telemetry command"),
         }
+        Ok(())
+    }
+
+    #[test]
+    fn parses_eval_run_all_with_default_format() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["svdo-meter", "eval", "run"])?;
+        let Commands::Eval(args) = cli.command else {
+            panic!("expected eval command");
+        };
+        let EvalCommands::Run(args) = args.command;
+
+        assert_eq!(args.eval, None);
+        assert_eq!(args.workspace, None);
+        assert_eq!(args.format, ReportFormat::Terminal);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_eval_run_one_with_workspace_and_json_format() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "eval",
+            "run",
+            "api-contract",
+            "--workspace",
+            "/tmp/workspace",
+            "--format",
+            "json",
+        ])?;
+        let Commands::Eval(args) = cli.command else {
+            panic!("expected eval command");
+        };
+        let EvalCommands::Run(args) = args.command;
+
+        assert_eq!(args.eval.as_deref(), Some("api-contract"));
+        assert_eq!(
+            args.workspace.as_deref(),
+            Some(std::path::Path::new("/tmp/workspace"))
+        );
+        assert_eq!(args.format, ReportFormat::Json);
         Ok(())
     }
 
@@ -1000,8 +1055,10 @@ mod tests {
         let help = Cli::command().render_help().to_string();
 
         assert!(help.contains("run"));
+        assert!(help.contains("eval"));
         assert!(help.contains("report"));
         assert!(help.contains("telemetry"));
+        assert!(help.contains("Run repository alignment evals"));
         assert!(help.contains("Run measured agent CLI work"));
         assert!(help.contains("Generate a local SVDO Trace report"));
         assert!(help.contains("Inspect local SVDO Meter telemetry"));
@@ -1010,6 +1067,11 @@ mod tests {
     #[test]
     fn command_help_documents_nested_paths() {
         assert_help_contains(["svdo-meter", "run", "--help"], "svdo-meter run --ticket");
+        assert_help_contains(["svdo-meter", "eval", "--help"], "run");
+        assert_help_contains(
+            ["svdo-meter", "eval", "run", "--help"],
+            "svdo-meter eval run add-account-endpoint",
+        );
         assert_help_contains(
             ["svdo-meter", "report", "--help"],
             "svdo-meter report --last 7d",

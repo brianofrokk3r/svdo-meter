@@ -1,0 +1,19 @@
+id: cli-entrypoint
+task: |
+  Confirm svdo-meter exposes a Rust binary entrypoint and Clap command wiring.
+checks:
+  - id: main-entrypoint
+    type: command
+    command: test -f crates/svdo-meter/src/main.rs
+    required: true
+    weight: 0.4
+  - id: clap-cli
+    type: command
+    command: grep -q "derive(Debug, Parser)" crates/svdo-meter/src/cli.rs
+    required: true
+    weight: 0.4
+  - id: cli-design
+    type: judge
+    standard: cli-design
+    weight: 0.2
+threshold: 0.8
