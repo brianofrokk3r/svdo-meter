@@ -50,7 +50,7 @@ pub struct EvalArgs {
 pub enum EvalCommands {
     /// Run one eval by id or file name, or all evals when omitted.
     #[command(
-        after_help = "Examples:\n  svdo-meter eval run\n  svdo-meter eval run add-account-endpoint\n  svdo-meter eval run add-account-endpoint --format json\n  svdo-meter eval run smoke.yaml --format csv"
+        after_help = "Examples:\n  svdo-meter eval run\n  svdo-meter eval run add-account-endpoint\n  svdo-meter eval run add-account-endpoint --format json\n  svdo-meter eval run smoke.yaml --format csv\n  svdo-meter eval run --harness codex --model gpt-5\n  svdo-meter eval run --harness claude --model sonnet"
     )]
     Run(EvalRunArgs),
 }
@@ -64,6 +64,27 @@ pub struct EvalRunArgs {
     /// Workspace containing `.svdo/evals/`. Defaults to the current directory.
     #[arg(long)]
     pub workspace: Option<PathBuf>,
+
+    /// Harness used to run judge checks. Supported: codex, claude.
+    #[arg(long, value_name = "HARNESS", conflicts_with = "judge_command")]
+    pub harness: Option<HarnessKind>,
+
+    /// Model passed to the judge harness.
+    #[arg(long, value_name = "MODEL", requires = "harness")]
+    pub model: Option<String>,
+
+    /// Program used to run judge checks. Receives the judge request JSON path as its final argument.
+    #[arg(long, value_name = "PROGRAM")]
+    pub judge_command: Option<PathBuf>,
+
+    /// Extra argument passed to --judge-command before the judge request JSON path.
+    #[arg(
+        long = "judge-arg",
+        value_name = "ARG",
+        requires = "judge_command",
+        allow_hyphen_values = true
+    )]
+    pub judge_args: Vec<String>,
 
     /// Output format for eval results.
     #[arg(long, default_value_t = ReportFormat::Terminal)]
@@ -980,6 +1001,79 @@ mod tests {
             Some(std::path::Path::new("/tmp/workspace"))
         );
         assert_eq!(args.format, ReportFormat::Json);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_eval_run_with_judge_command_and_args() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "eval",
+            "run",
+            "api-contract",
+            "--judge-command",
+            "/usr/local/bin/eval-judge",
+            "--judge-arg",
+            "--model",
+            "--judge-arg",
+            "gpt-5",
+        ])?;
+        let Commands::Eval(args) = cli.command else {
+            panic!("expected eval command");
+        };
+        let EvalCommands::Run(args) = args.command;
+
+        assert_eq!(args.eval.as_deref(), Some("api-contract"));
+        assert_eq!(
+            args.judge_command.as_deref(),
+            Some(std::path::Path::new("/usr/local/bin/eval-judge"))
+        );
+        assert_eq!(args.judge_args, ["--model", "gpt-5"]);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_eval_run_with_judge_harness_and_model() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "eval",
+            "run",
+            "api-contract",
+            "--harness",
+            "codex",
+            "--model",
+            "gpt-5",
+        ])?;
+        let Commands::Eval(args) = cli.command else {
+            panic!("expected eval command");
+        };
+        let EvalCommands::Run(args) = args.command;
+
+        assert_eq!(args.eval.as_deref(), Some("api-contract"));
+        assert_eq!(args.harness, Some(HarnessKind::Codex));
+        assert_eq!(args.model.as_deref(), Some("gpt-5"));
+        Ok(())
+    }
+
+    #[test]
+    fn parses_eval_run_with_claude_judge_harness_and_model() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "eval",
+            "run",
+            "--harness",
+            "claude",
+            "--model",
+            "sonnet",
+        ])?;
+        let Commands::Eval(args) = cli.command else {
+            panic!("expected eval command");
+        };
+        let EvalCommands::Run(args) = args.command;
+
+        assert_eq!(args.eval, None);
+        assert_eq!(args.harness, Some(HarnessKind::Claude));
+        assert_eq!(args.model.as_deref(), Some("sonnet"));
         Ok(())
     }
 
