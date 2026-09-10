@@ -6,6 +6,7 @@ SVDO Meter currently exposes these functional commands:
 
 ```text
 svdo-meter run
+svdo-meter eval run
 svdo-meter report
 svdo-meter telemetry
 ```
@@ -15,6 +16,8 @@ Help is available through Clap:
 ```bash
 svdo-meter --help
 svdo-meter run --help
+svdo-meter eval --help
+svdo-meter eval run --help
 svdo-meter report --help
 svdo-meter telemetry --help
 svdo-meter telemetry sessions --help
@@ -27,6 +30,8 @@ From source:
 ```bash
 cargo run -p svdo-meter -- --help
 cargo run -p svdo-meter -- run --help
+cargo run -p svdo-meter -- eval --help
+cargo run -p svdo-meter -- eval run --help
 cargo run -p svdo-meter -- report --help
 cargo run -p svdo-meter -- telemetry --help
 ```
@@ -135,6 +140,126 @@ Sink selection rules:
 | `--sink stdout --emit ndjson` | Write durable JSONL and emit one stdout NDJSON stream, not duplicate stdout records. |
 
 Unsupported sink names such as `otel`, `http`, or custom connector names are rejected during CLI parsing. Sink emit failures fail the run command; the event bus attempts every selected sink for the event before returning the first sink error.
+
+## `svdo-meter eval run`
+
+Runs repository alignment evals defined by the selected workspace. This command evaluates and reports results only; it does not retry, review, merge, route work, or invoke an agent orchestration flow.
+
+Eval definitions live under:
+
+```text
+<workspace>/.svdo/evals/
+```
+
+Referenced standards live under:
+
+```text
+<workspace>/.svdo/standards/
+```
+
+Run all eval definitions in the current repository:
+
+```bash
+svdo-meter eval run
+```
+
+Run a specific eval by id, file stem, or file name:
+
+```bash
+svdo-meter eval run add-account-endpoint
+svdo-meter eval run add-account-endpoint.yaml
+```
+
+Run evals for a different repository:
+
+```bash
+svdo-meter eval run --workspace ~/code/app
+svdo-meter eval run add-account-endpoint --workspace ~/code/app
+```
+
+Select an output format:
+
+```bash
+svdo-meter eval run --format terminal
+svdo-meter eval run --format json
+svdo-meter eval run --format csv
+```
+
+### Arguments
+
+| Argument | Required | Description |
+|---|---:|---|
+| `<EVAL>` | No | Eval id, file stem, or file name. When omitted, all `.yaml` and `.yml` eval definitions under `.svdo/evals/` run. |
+| `--workspace <PATH>` | No | Repository workspace containing `.svdo/evals/`. Defaults to the current directory. |
+| `--format <FORMAT>` | No | Output format. Supported values: `terminal`, `json`, `csv`. Defaults to `terminal`. |
+
+### Eval Definitions
+
+Eval definitions are YAML files. Supported top-level fields:
+
+| Field | Required | Description |
+|---|---:|---|
+| `id` | Yes | Stable eval identifier. A requested `<EVAL>` can match this value. |
+| `task` | Yes | Human-readable task or objective being evaluated. |
+| `checks` | Yes | Ordered list of command or judge checks. |
+| `threshold` | No | Minimum aggregate score required to pass. Defaults to `1.0`. |
+
+Supported check fields:
+
+| Field | Required | Description |
+|---|---:|---|
+| `id` | Yes | Stable check identifier. |
+| `type` | Yes | Check kind. Supported values: `command`, `judge`. |
+| `command` | Yes for `command` | Shell command executed from the workspace directory. |
+| `required` | No | When `true`, a failed check hard-fails the eval regardless of aggregate score. Defaults to `false`. |
+| `weight` | No | Numeric weight used in the aggregate score. Defaults to `1.0`. |
+| `standard` | No | Referenced standard id or file for judge checks. Resolved from `.svdo/standards/`. |
+
+Example:
+
+```yaml
+id: add-account-endpoint
+
+task: |
+  Add GET /accounts/{account_id}.
+
+checks:
+  - id: tests
+    type: command
+    command: pytest
+    required: true
+
+  - id: lint
+    type: command
+    command: ruff check .
+    required: true
+
+  - id: architecture
+    type: judge
+    standard: api-architecture
+    weight: 0.4
+
+threshold: 0.85
+```
+
+Command checks report success or failure, exit status, duration, and captured failure output. Non-required command checks contribute to the weighted score. Required command check failures cause the eval to fail even when the weighted score is above the threshold.
+
+Judge checks are represented in the schema and result model. In the current implementation, when no live judge harness is configured, judge checks resolve their referenced standards and report a skipped result with a clear reason. Skipped judge checks do not block deterministic command checks from running.
+
+### Results
+
+Each eval result includes:
+
+- Overall score
+- Pass/fail result
+- Individual check scores or outcomes
+- Violations or failure reasons
+- Duration
+- Token usage, when available
+- Model or harness, when available
+- Session ID, when available
+
+Terminal output is intended for humans and highlights pass/fail status, score, failed checks, and violations. JSON output includes the full structured result model. CSV output is pipe-friendly and emits one row per check with repeated eval-level fields.
 
 ## `svdo-meter report`
 
