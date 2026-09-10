@@ -1,15 +1,15 @@
 id: repository-standards
 task: |
-  Check that repository guidance and Spec Kit memory remain available.
+  Check that repository guidance and tracked alignment standards remain available.
 checks:
   - id: agents-file
     type: command
     command: test -f AGENTS.md
     required: true
     weight: 0.25
-  - id: constitution
+  - id: repository-alignment-standard
     type: command
-    command: test -f .specify/memory/constitution.md
+    command: test -f .svdo/standards/repository-alignment.md
     required: true
     weight: 0.25
   - id: alignment-standard
