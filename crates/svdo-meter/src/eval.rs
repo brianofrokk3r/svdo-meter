@@ -527,16 +527,34 @@ fn run_judge_check(
             session_id: None,
         });
     }
-    let stdout = String::from_utf8(execution.output.stdout)
-        .with_context(|| format!("judge check `{}` emitted non-UTF-8 output", check.id))?;
-    let response = parse_judge_response(&stdout, &check.id)?;
-    if !(0.0..=1.0).contains(&response.score) {
-        bail!(
-            "judge check `{}` emitted score {}; expected 0.0 through 1.0",
-            check.id,
-            response.score
-        );
-    }
+    let stdout = String::from_utf8_lossy(&execution.output.stdout);
+    let response = match parse_judge_response(&stdout, &check.id) {
+        Ok(response) if (0.0..=1.0).contains(&response.score) => response,
+        Ok(response) => {
+            return Ok(invalid_judge_response_result(
+                check,
+                &request,
+                execution,
+                duration_ms,
+                format!(
+                    "judge response for eval `{}` check `{}` emitted score {}; expected 0.0 through 1.0",
+                    definition.id, check.id, response.score
+                ),
+            ));
+        }
+        Err(error) => {
+            return Ok(invalid_judge_response_result(
+                check,
+                &request,
+                execution,
+                duration_ms,
+                format!(
+                    "invalid judge response for eval `{}` check `{}`: {error}",
+                    definition.id, check.id
+                ),
+            ));
+        }
+    };
     let passed = response.passed.unwrap_or(response.score >= 1.0);
     let mut violations = response.violations;
     if !passed && violations.is_empty() {
@@ -567,6 +585,35 @@ fn run_judge_check(
             .or_else(|| Some(execution.harness.to_owned())),
         session_id: response.session_id,
     })
+}
+
+fn invalid_judge_response_result(
+    check: &CheckDefinition,
+    request: &JudgeRequest<'_>,
+    execution: JudgeExecution,
+    duration_ms: u128,
+    reason: String,
+) -> CheckResult {
+    let output = failure_output(&execution.output.stdout, &execution.output.stderr);
+    CheckResult {
+        id: check.id.clone(),
+        check_type: CheckType::Judge,
+        outcome: CheckOutcome::Failed,
+        required: check.required,
+        weight: check.weight,
+        score: Some(0.0),
+        duration_ms,
+        command: Some(execution.command),
+        exit_code: execution.output.status.code(),
+        standard: check.standard.clone(),
+        standard_path: request.standard_path.clone(),
+        violations: vec![format!("{reason}; output excerpt: {output}")],
+        output: Some(output),
+        token_usage: None,
+        model: execution.model,
+        harness: Some(execution.harness.to_owned()),
+        session_id: None,
+    }
 }
 
 fn resolve_standard(workspace: &Path, standard: &str) -> anyhow::Result<PathBuf> {
@@ -745,10 +792,12 @@ fn judge_response_from_value(value: &Value) -> anyhow::Result<Option<JudgeRespon
             return Ok(Some(response));
         }
     }
-    if let Some(message) = value.get("message")
-        && let Some(response) = judge_response_from_value(message)?
-    {
-        return Ok(Some(response));
+    for key in ["message", "item", "data", "response"] {
+        if let Some(nested) = value.get(key)
+            && let Some(response) = judge_response_from_value(nested)?
+        {
+            return Ok(Some(response));
+        }
     }
     if let Some(content) = value.get("content").and_then(Value::as_array) {
         for item in content {
@@ -1360,6 +1409,31 @@ threshold: 0.85
         );
         fs::remove_dir_all(workspace)?;
         Ok(())
+    }
+
+    #[test]
+    fn parses_codex_item_text_judge_response() -> anyhow::Result<()> {
+        let response = parse_judge_response(
+            r#"{"type":"item.completed","item":{"type":"agent_message","text":"{\"score\":0.75,\"passed\":false,\"violations\":[\"needs tighter CLI output\"]}"}}"#,
+            "cli-design",
+        )?;
+
+        assert_eq!(response.score, 0.75);
+        assert_eq!(response.passed, Some(false));
+        assert_eq!(response.violations, ["needs tighter CLI output"]);
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_judge_response_error_includes_check_name() {
+        let error = parse_judge_response("not json", "cli-design")
+            .expect_err("missing score should fail parsing");
+
+        assert!(
+            error
+                .to_string()
+                .contains("judge check `cli-design` must emit JSON with a numeric `score` field")
+        );
     }
 
     #[test]
