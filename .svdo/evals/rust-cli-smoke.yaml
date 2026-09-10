@@ -1,0 +1,15 @@
+id: rust-cli-smoke
+task: |
+  Confirm the Rust CLI workspace has the expected top-level package structure.
+checks:
+  - id: cargo-manifest
+    type: command
+    command: test -f Cargo.toml
+    required: true
+    weight: 0.5
+  - id: svdo-meter-crate
+    type: command
+    command: test -f crates/svdo-meter/Cargo.toml
+    required: true
+    weight: 0.5
+threshold: 1.0

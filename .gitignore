@@ -2,6 +2,11 @@
 .agents
 .codex
 .svdo
+!.svdo/
+!.svdo/evals/
+!.svdo/evals/**
+!.svdo/standards/
+!.svdo/standards/**
 .specify
 specs
 !.specify/
@@ -12,3 +17,4 @@ specs
 target
 specs/*
 docs/cross-cli-harness-options.md
+docs/internal/*

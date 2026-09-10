@@ -1,11 +1,12 @@
 mod cli;
 mod config;
+mod eval;
 mod wiring;
 
 use anyhow::Context;
 use chrono::{Duration as ChronoDuration, Utc};
 use clap::Parser;
-use cli::{Cli, Commands, ReportFormat, TelemetryCommands};
+use cli::{Cli, Commands, EvalCommands, ReportFormat, TelemetryCommands};
 use meter_core::{ModelName, SessionId, TicketId};
 use meter_engine::RunRequest;
 use meter_report::{
@@ -22,6 +23,18 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
+        Commands::Eval(args) => match args.command {
+            EvalCommands::Run(args) => {
+                let workspace = args.workspace.unwrap_or(std::env::current_dir()?);
+                let report = eval::run(&workspace, args.eval.as_deref())
+                    .with_context(|| format!("failed to run evals in `{}`", workspace.display()))?;
+                let passed = report.passed;
+                println!("{}", eval::render(&report, args.format)?);
+                if !passed {
+                    std::process::exit(1);
+                }
+            }
+        },
         Commands::Run(args) => {
             let prompt = cli::resolve_prompt(&args)?;
             let sink_selection = wiring::RunSinkSelection::from_args(&args);
