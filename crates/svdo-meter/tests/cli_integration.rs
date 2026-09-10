@@ -415,6 +415,62 @@ printf '{"score": 0.25, "passed": false, "violations": ["missing architecture ev
 }
 
 #[test]
+fn eval_reports_invalid_judge_response_with_context() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-eval-judge-invalid-integration");
+    write_eval_definition(
+        &workspace,
+        "judge-invalid.yaml",
+        r#"
+id: judge-invalid
+task: Review CLI design.
+checks:
+  - id: cli-design
+    type: judge
+    standard: cli-design
+    required: true
+    weight: 1.0
+threshold: 1.0
+"#,
+    )?;
+    write_standard(
+        &workspace,
+        "cli-design.md",
+        "Keep command-line output precise and actionable.",
+    )?;
+    let judge = write_executable(
+        &workspace,
+        "judge.sh",
+        r#"#!/bin/sh
+printf 'I checked the CLI and it looks okay, but forgot the score field.'
+"#,
+    )?;
+
+    let output = run_svdo_meter(&[
+        "eval",
+        "run",
+        "judge-invalid",
+        "--workspace",
+        path_str(&workspace)?,
+        "--judge-command",
+        path_str(&judge)?,
+        "--format",
+        "json",
+    ]);
+
+    assert!(!output.status.success());
+    assert_stdout_contains(&output, "\"id\": \"judge-invalid\"");
+    assert_stdout_contains(&output, "\"id\": \"cli-design\"");
+    assert_stdout_contains(&output, "\"outcome\": \"failed\"");
+    assert_stdout_contains(
+        &output,
+        "invalid judge response for eval `judge-invalid` check `cli-design`",
+    );
+    assert_stdout_contains(&output, "forgot the score field");
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
 fn repo_sample_evals_are_runnable() {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
     let output = run_svdo_meter(&[
