@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-09-10
+
+- Updated `svdo-meter eval run` judge handling so Codex and Claude judge checks can be configured with `--harness` and `--model`, and custom judge programs can be configured with `--judge-command`.
+- Fixed scoreless or malformed judge output, including Codex stream output for `cli-design`, to report a failed judge check with captured context instead of aborting the entire eval run.
+- Added eval judge integration coverage for Codex, Claude, custom judge commands, failing judge scores, and invalid judge responses.
+- Updated eval CLI help and documentation for judge harnesses, judge command arguments, request payloads, and expected JSON response fields.
+
 ## 2026-08-28
 
 - Added a top-level GitHub installer script for installing prebuilt `svdo-meter` release binaries without cloning the repository.
