@@ -9,9 +9,11 @@ It associates a ticket/work identifier with an agent CLI run, invokes or resumes
 The v0.1 baseline centers on:
 
 - `svdo-meter run`
+- `svdo-meter eval run`
 - `svdo-meter telemetry`
 - the `codex` and `claude` harnesses
 - local per-run JSONL telemetry under `.svdo/meter/`
+- repository alignment eval definitions under `.svdo/evals/`
 - optional live stdout NDJSON event streaming from `svdo-meter run`
 - rebuildable session association from `session.discovered` events
 - fixture-based tests that do not require live Codex execution
@@ -23,6 +25,8 @@ The CLI is built with Clap, so command help is available from the binary:
 ```bash
 svdo-meter --help
 svdo-meter run --help
+svdo-meter eval --help
+svdo-meter eval run --help
 svdo-meter report --help
 svdo-meter telemetry --help
 ```
@@ -32,6 +36,8 @@ If running from source:
 ```bash
 cargo run -p svdo-meter -- --help
 cargo run -p svdo-meter -- run --help
+cargo run -p svdo-meter -- eval --help
+cargo run -p svdo-meter -- eval run --help
 cargo run -p svdo-meter -- report --help
 cargo run -p svdo-meter -- telemetry --help
 ```
@@ -84,6 +90,7 @@ Run it from the build output:
 ```bash
 ./target/debug/svdo-meter --help
 ./target/debug/svdo-meter run --help
+./target/debug/svdo-meter eval run --help
 ./target/debug/svdo-meter report --help
 ./target/debug/svdo-meter telemetry --help
 ```
@@ -225,6 +232,45 @@ svdo-meter report ENG-142 --pricing-file pricing.json
 ```
 
 When telemetry references a model that is not present in the pricing JSON, the report marks that model's cost as unavailable instead of using a default price.
+
+## Run Repository Alignment Evals
+
+Repositories can define reusable alignment evals and standards under `.svdo/`:
+
+```text
+.svdo/
+  evals/
+  standards/
+```
+
+Run all evals in the current repository:
+
+```bash
+svdo-meter eval run
+```
+
+Run one eval by id, file stem, or file name:
+
+```bash
+svdo-meter eval run add-account-endpoint
+svdo-meter eval run add-account-endpoint.yaml
+```
+
+Run evals against another repository without changing directories:
+
+```bash
+svdo-meter eval run --workspace ~/code/app
+```
+
+Eval output supports the same report-style formats:
+
+```bash
+svdo-meter eval run --format terminal
+svdo-meter eval run --format json
+svdo-meter eval run --format csv
+```
+
+Command checks run locally in the selected workspace. Judge checks are represented in the eval schema and result output; without a configured judge harness they are reported as skipped while deterministic command checks still run.
 
 ## Telemetry
 
