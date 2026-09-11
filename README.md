@@ -4,6 +4,8 @@ SVDO Meter is a thin telemetry harness for agentic coding CLI sessions.
 
 It associates a ticket/work identifier with an agent CLI run, invokes or resumes the selected harness, normalizes objective events where possible, and writes durable append-only telemetry locally. It is not an orchestration framework, ticketing system, model router, or remote connector.
 
+Keywords: `ai-agents`, `coding-agents`, `observability`, `llm`, `codex`, `claude-code`, `developer-tools`.
+
 ## Current Status
 
 The v0.1 baseline centers on:
@@ -69,6 +71,55 @@ Supported installer platforms:
 - macOS arm64/aarch64
 
 After installation, the script verifies the binary with `svdo-meter --help`. If `$HOME/.local/bin` is not on `PATH`, add it before running `svdo-meter` from another directory.
+
+## 30-Second Example
+
+Run one measured agent session from a repository workspace, then render the local report:
+
+```bash
+svdo-meter run \
+  --ticket ENG-142 \
+  --label "Add password reset flow" \
+  --harness codex \
+  --workspace ~/code/app \
+  "Implement the password reset flow described in ENG-142"
+
+svdo-meter report ENG-142 --workspace ~/code/app
+```
+
+SVDO Meter writes append-only telemetry to:
+
+```text
+~/code/app/.svdo/meter/<run-id>.jsonl
+```
+
+The report output looks like this fixture-backed example:
+
+```text
+SVDO Trace
+────────────────────────────
+
+Work
+  ENG-142
+
+Harness
+  codex
+
+Session
+  019c8a-fixture
+
+Runs
+  2
+
+Agent Time
+  18m 42s
+
+Tokens
+  Input   120,000
+  Output  42,000
+  Cache   32,213
+  Total   194,213
+```
 
 ## Compile
 
