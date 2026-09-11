@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-11
+
+- Standardized Cargo workspace license metadata to MIT so all crates inherit the same license as the root `LICENSE`.
+
 ## 2026-08-28
 
 - Added a top-level GitHub installer script for installing prebuilt `svdo-meter` release binaries without cloning the repository.
