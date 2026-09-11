@@ -225,35 +225,6 @@ fn payload(name: &'static str, data: Value) -> Value {
     json!({ "type": name, "data": data })
 }
 
-fn metrics(
-    provider_event_count: u64,
-    commands_executed: u64,
-    failed_commands: u64,
-    command_time_ms: u64,
-    files_changed: u64,
-    tool_calls: u64,
-    tool_time_ms: u64,
-    turn_count: u64,
-    active_time_ms: u64,
-    errors: u64,
-    token_usage: TokenUsage,
-) -> RunMetrics {
-    RunMetrics {
-        wall_time_ms: 0,
-        active_time_ms,
-        command_time_ms,
-        tool_time_ms,
-        turn_count,
-        provider_event_count,
-        commands_executed,
-        failed_commands,
-        files_changed,
-        tool_calls,
-        errors,
-        token_usage,
-    }
-}
-
 fn codex_cases() -> Vec<ConformanceCase> {
     vec![
         ConformanceCase {
@@ -337,25 +308,24 @@ fn codex_cases() -> Vec<ConformanceCase> {
                     ),
                 ),
             ],
-            expected_metrics: metrics(
-                7,
-                1,
-                0,
-                1200,
-                2,
-                1,
-                300,
-                1,
-                2400,
-                0,
-                TokenUsage {
+            expected_metrics: RunMetrics {
+                provider_event_count: 7,
+                commands_executed: 1,
+                command_time_ms: 1200,
+                files_changed: 2,
+                tool_calls: 1,
+                tool_time_ms: 300,
+                turn_count: 1,
+                active_time_ms: 2400,
+                token_usage: TokenUsage {
                     input_tokens: Some(100),
                     cached_input_tokens: Some(25),
                     cache_write_tokens: Some(5),
                     output_tokens: Some(80),
                     reasoning_tokens: Some(30),
                 },
-            ),
+                ..RunMetrics::default()
+            },
             expected_session_id: Some("019c8a42-f72-success"),
             expected_resolved_model: Some("gpt-5"),
             expected_failure_reason: None,
@@ -397,7 +367,14 @@ fn codex_cases() -> Vec<ConformanceCase> {
                     ),
                 ),
             ],
-            expected_metrics: metrics(4, 1, 1, 900, 0, 0, 0, 0, 0, 1, TokenUsage::default()),
+            expected_metrics: RunMetrics {
+                provider_event_count: 4,
+                commands_executed: 1,
+                failed_commands: 1,
+                command_time_ms: 900,
+                errors: 1,
+                ..RunMetrics::default()
+            },
             expected_session_id: Some("019c8a42-f72-failed"),
             expected_resolved_model: None,
             expected_failure_reason: Some("tests failed"),
@@ -425,23 +402,16 @@ fn codex_cases() -> Vec<ConformanceCase> {
                     ),
                 ),
             ],
-            expected_metrics: metrics(
-                2,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                1,
-                0,
-                0,
-                TokenUsage {
+            expected_metrics: RunMetrics {
+                provider_event_count: 2,
+                turn_count: 1,
+                token_usage: TokenUsage {
                     input_tokens: Some(8),
                     output_tokens: Some(2),
                     ..TokenUsage::default()
                 },
-            ),
+                ..RunMetrics::default()
+            },
             expected_session_id: Some("019c8a42-f72-existing"),
             expected_resolved_model: None,
             expected_failure_reason: None,
@@ -458,7 +428,11 @@ fn codex_cases() -> Vec<ConformanceCase> {
                 None,
                 payload("session_discovered", json!({ "source": "codex" })),
             )],
-            expected_metrics: metrics(1, 0, 0, 0, 0, 0, 0, 0, 0, 1, TokenUsage::default()),
+            expected_metrics: RunMetrics {
+                provider_event_count: 1,
+                errors: 1,
+                ..RunMetrics::default()
+            },
             expected_session_id: Some("019c8a42-f72-partial"),
             expected_resolved_model: None,
             expected_failure_reason: None,
@@ -475,7 +449,11 @@ fn codex_cases() -> Vec<ConformanceCase> {
                 None,
                 payload("session_discovered", json!({ "source": "codex" })),
             )],
-            expected_metrics: metrics(1, 0, 0, 0, 0, 0, 0, 0, 0, 1, TokenUsage::default()),
+            expected_metrics: RunMetrics {
+                provider_event_count: 1,
+                errors: 1,
+                ..RunMetrics::default()
+            },
             expected_session_id: Some("ok"),
             expected_resolved_model: None,
             expected_failure_reason: None,
@@ -487,7 +465,12 @@ fn codex_cases() -> Vec<ConformanceCase> {
             fixture: include_str!("../../../tests/fixtures/codex/missing_token_usage.jsonl"),
             harness: HarnessKind::Codex,
             expected_events: Vec::new(),
-            expected_metrics: metrics(1, 0, 0, 0, 0, 0, 0, 1, 100, 0, TokenUsage::default()),
+            expected_metrics: RunMetrics {
+                provider_event_count: 1,
+                turn_count: 1,
+                active_time_ms: 100,
+                ..RunMetrics::default()
+            },
             expected_session_id: None,
             expected_resolved_model: None,
             expected_failure_reason: None,
@@ -499,7 +482,10 @@ fn codex_cases() -> Vec<ConformanceCase> {
             fixture: include_str!("../../../tests/fixtures/codex/unknown_event.jsonl"),
             harness: HarnessKind::Codex,
             expected_events: Vec::new(),
-            expected_metrics: metrics(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, TokenUsage::default()),
+            expected_metrics: RunMetrics {
+                provider_event_count: 1,
+                ..RunMetrics::default()
+            },
             expected_session_id: None,
             expected_resolved_model: None,
             expected_failure_reason: None,
@@ -561,25 +547,20 @@ fn claude_cases() -> Vec<ConformanceCase> {
                     payload("usage_reported", json!({ "output_tokens": 15 })),
                 ),
             ],
-            expected_metrics: metrics(
-                4,
-                0,
-                0,
-                0,
-                0,
-                1,
-                0,
-                2,
-                1800,
-                0,
-                TokenUsage {
+            expected_metrics: RunMetrics {
+                provider_event_count: 4,
+                tool_calls: 1,
+                turn_count: 2,
+                active_time_ms: 1800,
+                token_usage: TokenUsage {
                     input_tokens: Some(100),
                     cached_input_tokens: Some(20),
                     cache_write_tokens: Some(5),
                     output_tokens: Some(25),
                     reasoning_tokens: None,
                 },
-            ),
+                ..RunMetrics::default()
+            },
             expected_session_id: Some("sess-claude-1"),
             expected_resolved_model: Some("claude-sonnet-5"),
             expected_failure_reason: None,
@@ -596,7 +577,12 @@ fn claude_cases() -> Vec<ConformanceCase> {
                 Some("claude-sonnet-5"),
                 payload("session_discovered", json!({ "source": "claude" })),
             )],
-            expected_metrics: metrics(2, 0, 0, 0, 0, 0, 0, 1, 0, 1, TokenUsage::default()),
+            expected_metrics: RunMetrics {
+                provider_event_count: 2,
+                turn_count: 1,
+                errors: 1,
+                ..RunMetrics::default()
+            },
             expected_session_id: Some("sess-claude-failed"),
             expected_resolved_model: Some("claude-sonnet-5"),
             expected_failure_reason: Some("maximum turns reached"),
@@ -608,7 +594,10 @@ fn claude_cases() -> Vec<ConformanceCase> {
             fixture: include_str!("../../../tests/fixtures/claude/unknown_event.jsonl"),
             harness: HarnessKind::Claude,
             expected_events: Vec::new(),
-            expected_metrics: metrics(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, TokenUsage::default()),
+            expected_metrics: RunMetrics {
+                provider_event_count: 1,
+                ..RunMetrics::default()
+            },
             expected_session_id: None,
             expected_resolved_model: None,
             expected_failure_reason: None,
