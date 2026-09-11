@@ -79,6 +79,9 @@ async fn main() -> anyhow::Result<()> {
                 })
                 .await?;
             if !outcome.success {
+                if let Some(reason) = outcome.failure_reason {
+                    eprintln!("{reason}");
+                }
                 std::process::exit(outcome.exit_code.unwrap_or(1));
             }
         }

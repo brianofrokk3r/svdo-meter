@@ -62,11 +62,15 @@ pub fn harness_config(
         HarnessKind::Gemini => HarnessConfig::Gemini(meter_core::GeminiConfig {
             model: model.clone(),
         }),
+        HarnessKind::Litellm => HarnessConfig::Litellm(meter_core::LitellmConfig {
+            model: model.clone(),
+        }),
     };
     let raw_event_retention = match &config {
         HarnessConfig::Codex(config) => config.raw_event_retention.clone(),
         HarnessConfig::Claude(config) => config.raw_event_retention.clone(),
         HarnessConfig::Gemini(_) => RawEventRetention::Disabled,
+        HarnessConfig::Litellm(_) => RawEventRetention::Disabled,
     };
     let options = match args.harness {
         HarnessKind::Claude => {
@@ -76,7 +80,7 @@ pub fn harness_config(
                 _ => HarnessOptions::empty(),
             }
         }
-        HarnessKind::Codex | HarnessKind::Gemini => HarnessOptions::empty(),
+        HarnessKind::Codex | HarnessKind::Gemini | HarnessKind::Litellm => HarnessOptions::empty(),
     };
     Ok(RunHarnessConfig {
         config,
@@ -99,8 +103,11 @@ fn execution_permission(args: &RunArgs) -> ExecutionPermissionMode {
 }
 
 fn validate_dangerous_bypass(args: &RunArgs) -> anyhow::Result<()> {
-    if args.dangerous_bypass && args.harness == HarnessKind::Gemini {
-        bail!("--dangerous-bypass is not supported for --harness gemini")
+    if args.dangerous_bypass && matches!(args.harness, HarnessKind::Gemini | HarnessKind::Litellm) {
+        bail!(
+            "--dangerous-bypass is not supported for --harness {}",
+            args.harness
+        )
     }
     if args.dangerous_bypass
         && args.harness == HarnessKind::Claude
@@ -328,6 +335,27 @@ mod tests {
     }
 
     #[test]
+    fn litellm_config_exposes_neutral_run_fields() {
+        let model = ModelName::new("gpt-5").unwrap_or_else(|err| panic!("{err}"));
+        let args = run_args(HarnessKind::Litellm);
+
+        let config =
+            harness_config(&args, Some(model.clone())).unwrap_or_else(|err| panic!("{err}"));
+
+        assert_eq!(config.model, Some(model.clone()));
+        assert_eq!(config.raw_event_retention, RawEventRetention::Disabled);
+        assert_eq!(
+            config.execution_permission,
+            ExecutionPermissionMode::Standard
+        );
+        assert!(config.options.values().is_empty());
+        assert_eq!(
+            config.config,
+            HarnessConfig::Litellm(meter_core::LitellmConfig { model: Some(model) })
+        );
+    }
+
+    #[test]
     fn rejects_conflicting_claude_permission_mode_for_dangerous_bypass() {
         let mut args = run_args(HarnessKind::Claude);
         args.dangerous_bypass = true;
@@ -359,6 +387,23 @@ mod tests {
             error
                 .to_string()
                 .contains("--dangerous-bypass is not supported for --harness gemini")
+        );
+    }
+
+    #[test]
+    fn rejects_dangerous_bypass_for_litellm() {
+        let mut args = run_args(HarnessKind::Litellm);
+        args.dangerous_bypass = true;
+
+        let error = match harness_config(&args, None) {
+            Ok(_) => panic!("expected harness config error"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("--dangerous-bypass is not supported for --harness litellm")
         );
     }
 

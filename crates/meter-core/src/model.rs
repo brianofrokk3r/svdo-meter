@@ -33,6 +33,7 @@ pub enum HarnessKind {
     Codex,
     Claude,
     Gemini,
+    Litellm,
 }
 
 impl HarnessKind {
@@ -41,6 +42,7 @@ impl HarnessKind {
             Self::Codex => "codex",
             Self::Claude => "claude",
             Self::Gemini => "gemini",
+            Self::Litellm => "litellm",
         }
     }
 }
@@ -86,6 +88,7 @@ impl FromStr for HarnessKind {
             "codex" => Ok(Self::Codex),
             "claude" => Ok(Self::Claude),
             "gemini" => Ok(Self::Gemini),
+            "litellm" => Ok(Self::Litellm),
             other => Err(HarnessParseError(other.to_owned())),
         }
     }
@@ -103,6 +106,7 @@ pub enum HarnessConfig {
     Codex(CodexConfig),
     Claude(ClaudeConfig),
     Gemini(GeminiConfig),
+    Litellm(LitellmConfig),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -257,4 +261,27 @@ pub struct ClaudeRunOptions {
 pub struct GeminiConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelName>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LitellmConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelName>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::HarnessKind;
+
+    #[test]
+    fn parses_litellm_harness_kind() {
+        assert_eq!(
+            HarnessKind::from_str("litellm").unwrap_or_else(|err| panic!("{err}")),
+            HarnessKind::Litellm
+        );
+        assert_eq!(HarnessKind::Litellm.as_str(), "litellm");
+        assert_eq!(HarnessKind::Litellm.to_string(), "litellm");
+    }
 }
