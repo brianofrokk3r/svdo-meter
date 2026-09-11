@@ -37,6 +37,7 @@ pub struct RunOutcome {
     pub session_id: Option<SessionId>,
     pub metrics: RunMetrics,
     pub exit_code: Option<i32>,
+    pub failure_reason: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -156,9 +157,10 @@ impl RunEngine {
                 .with_resolved_model(result.resolved_model.clone()),
             Err(_) => base_context,
         };
-        let (success, session_id, metrics, exit_code) = match harness_result {
+        let (success, session_id, metrics, exit_code, failure_reason) = match harness_result {
             Ok(mut result) => {
                 result.metrics.wall_time_ms = elapsed_ms;
+                let failure_reason = result.failure_reason.clone();
                 let payload = if result.success {
                     EventPayload::RunCompleted(RunCompleted {
                         metrics: result.metrics.clone(),
@@ -186,9 +188,11 @@ impl RunEngine {
                     result.session_id,
                     result.metrics,
                     result.exit_code,
+                    failure_reason,
                 )
             }
             Err(error) => {
+                let reason = harness_error_reason(&error);
                 let metrics = RunMetrics {
                     wall_time_ms: elapsed_ms,
                     errors: 1,
@@ -198,7 +202,7 @@ impl RunEngine {
                     terminal_context,
                     EventPayload::RunFailed(RunFailed {
                         metrics: metrics.clone(),
-                        reason: harness_error_reason(&error),
+                        reason: reason.clone(),
                         exit_code: None,
                     }),
                 );
@@ -208,7 +212,7 @@ impl RunEngine {
                         "event writer closed",
                     ))
                 })?;
-                (false, None, metrics, None)
+                (false, None, metrics, None, Some(reason))
             }
         };
         drop(tx);
@@ -220,6 +224,7 @@ impl RunEngine {
             session_id,
             metrics,
             exit_code,
+            failure_reason,
         })
     }
 }
@@ -235,6 +240,7 @@ fn harness_error_reason(error: &HarnessError) -> String {
         HarnessError::UnsupportedConfig(message) => {
             format!("unsupported harness configuration for adapter: {message}")
         }
+        HarnessError::Api(message) => format!("harness API error: {message}"),
         HarnessError::Interrupted => "harness process was interrupted".to_owned(),
     }
 }

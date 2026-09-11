@@ -2,7 +2,7 @@ use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use meter_adapters::{ClaudeAdapter, CodexAdapter, JsonlEventStore};
+use meter_adapters::{ClaudeAdapter, CodexAdapter, JsonlEventStore, LitellmAdapter};
 use meter_core::{HarnessConfig, HarnessKind};
 use meter_engine::{NdjsonWriteSink, RunEngine};
 use meter_report::{
@@ -47,8 +47,12 @@ pub fn engine(
             engine.with_adapter(Arc::new(ClaudeAdapter::new(config.binary.clone())))
         }
         (HarnessKind::Gemini, _) => engine,
+        (HarnessKind::Litellm, HarnessConfig::Litellm(config)) => {
+            engine.with_adapter(Arc::new(LitellmAdapter::new(config.clone())))
+        }
         (HarnessKind::Codex, _) => engine,
         (HarnessKind::Claude, _) => engine,
+        (HarnessKind::Litellm, _) => engine,
     }
 }
 
@@ -114,13 +118,17 @@ fn telemetry_paths(path: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
 mod tests {
     use crate::cli::{EmitFormat, RunArgs, RunSink};
 
-    use meter_core::{GeminiConfig, HarnessConfig, HarnessKind, RawEventRetention, TicketId};
+    use meter_core::{
+        EventPayload, GeminiConfig, HarnessConfig, HarnessKind, RawEventRetention, TicketId,
+    };
     use meter_engine::{HarnessOptions, RunError, RunRequest};
     use meter_report::ReportQuery;
 
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{RunSinkSelection, engine, load_report, load_telemetry_inspection};
+    use super::{
+        RunSinkSelection, default_telemetry_path, engine, load_report, load_telemetry_inspection,
+    };
 
     #[test]
     fn run_sink_selection_preserves_jsonl_by_default() {
@@ -221,6 +229,59 @@ mod tests {
             error,
             RunError::MissingAdapter(HarnessKind::Gemini)
         ));
+    }
+
+    #[tokio::test]
+    async fn litellm_wiring_registers_api_adapter_and_writes_redacted_failure_telemetry() {
+        let workspace = Some(unique_temp_path("workspace"));
+        let engine = engine(
+            &workspace,
+            HarnessKind::Litellm,
+            &HarnessConfig::Litellm(meter_core::LitellmConfig { model: None }),
+            RunSinkSelection {
+                jsonl: true,
+                stdout_ndjson: false,
+            },
+        );
+
+        let marker = "unit-test-litellm-key-redaction-marker";
+        let outcome = engine
+            .run(RunRequest {
+                ticket_id: TicketId::new("ENG-LITELLM").unwrap_or_else(|err| panic!("{err}")),
+                label: None,
+                harness: HarnessKind::Litellm,
+                workspace: workspace.clone(),
+                session_override: None,
+                model: None,
+                raw_event_retention: RawEventRetention::Disabled,
+                execution_permission: meter_core::ExecutionPermissionMode::Standard,
+                options: HarnessOptions::empty(),
+                prompt: "Do work".to_owned(),
+            })
+            .await
+            .unwrap_or_else(|err| panic!("{err}"));
+
+        assert!(!outcome.success);
+        let telemetry_dir = default_telemetry_path(&workspace);
+        let inspection =
+            load_telemetry_inspection(&telemetry_dir).unwrap_or_else(|err| panic!("{err}"));
+        assert_eq!(inspection.records.len(), 2);
+        assert!(matches!(
+            inspection.records[0].payload,
+            EventPayload::RunStarted(_)
+        ));
+        assert!(matches!(
+            inspection.records[1].payload,
+            EventPayload::RunFailed(_)
+        ));
+        for line in std::fs::read_to_string(telemetry_dir.join(format!("{}.jsonl", outcome.run_id)))
+            .unwrap_or_else(|err| panic!("{err}"))
+            .lines()
+        {
+            assert!(!line.contains(marker));
+            assert!(!line.contains("Authorization"));
+        }
+        std::fs::remove_dir_all(workspace.unwrap()).unwrap_or_else(|err| panic!("{err}"));
     }
 
     fn unique_temp_path(file_name: &str) -> std::path::PathBuf {

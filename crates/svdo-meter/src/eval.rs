@@ -6,7 +6,10 @@ use std::process::{Command, Output};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, bail};
-use meter_adapters::{claude_argv, codex_argv};
+use meter_adapters::{
+    HttpLitellmApiClient, LITELLM_API_BASE_ENV, LitellmApiClient, LitellmApiKey,
+    LitellmChatRequest, claude_argv, codex_argv,
+};
 use meter_core::{ClaudeConfig, ClaudeRunOptions, CodexConfig, HarnessKind, ModelName};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -41,6 +44,7 @@ pub struct JudgeConfig {
 enum JudgeRunner {
     Codex(CodexJudge),
     Claude(ClaudeJudge),
+    Litellm(LitellmJudge),
     Command(JudgeCommand),
 }
 
@@ -55,6 +59,11 @@ struct ClaudeJudge {
 }
 
 #[derive(Debug, Clone)]
+struct LitellmJudge {
+    model: Option<ModelName>,
+}
+
+#[derive(Debug, Clone)]
 struct JudgeCommand {
     program: PathBuf,
     args: Vec<String>,
@@ -62,7 +71,10 @@ struct JudgeCommand {
 
 #[derive(Debug)]
 struct JudgeExecution {
-    output: Output,
+    success: bool,
+    exit_code: Option<i32>,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
     command: String,
     harness: &'static str,
     model: Option<String>,
@@ -79,7 +91,7 @@ struct JudgeRequest<'a> {
     workspace: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct JudgeResponse {
     score: f64,
     #[serde(default)]
@@ -214,8 +226,11 @@ impl JudgeConfig {
             HarnessKind::Claude => Ok(Self {
                 runner: Some(JudgeRunner::Claude(ClaudeJudge { model })),
             }),
+            HarnessKind::Litellm => Ok(Self {
+                runner: Some(JudgeRunner::Litellm(LitellmJudge { model })),
+            }),
             HarnessKind::Gemini => {
-                bail!("eval judge --harness currently supports codex and claude")
+                bail!("eval judge --harness currently supports codex, claude, and litellm")
             }
         }
     }
@@ -497,7 +512,7 @@ fn run_judge_check(
         .with_context(|| format!("failed to execute judge check `{}`", check.id));
     let execution = execution?;
     let duration_ms = elapsed_ms(started.elapsed());
-    if !execution.output.status.success() {
+    if !execution.success {
         return Ok(CheckResult {
             id: check.id.clone(),
             check_type: CheckType::Judge,
@@ -507,27 +522,24 @@ fn run_judge_check(
             score: Some(0.0),
             duration_ms,
             command: Some(execution.command),
-            exit_code: execution.output.status.code(),
+            exit_code: execution.exit_code,
             standard: check.standard.clone(),
             standard_path: request.standard_path.clone(),
             violations: vec![format!(
                 "judge exited with status {}",
-                execution.output.status.code().map_or_else(
+                execution.exit_code.map_or_else(
                     || "terminated by signal".to_owned(),
                     |code| code.to_string()
                 )
             )],
-            output: Some(failure_output(
-                &execution.output.stdout,
-                &execution.output.stderr,
-            )),
+            output: Some(failure_output(&execution.stdout, &execution.stderr)),
             token_usage: None,
             model: execution.model,
             harness: Some(execution.harness.to_owned()),
             session_id: None,
         });
     }
-    let stdout = String::from_utf8_lossy(&execution.output.stdout);
+    let stdout = String::from_utf8_lossy(&execution.stdout);
     let response = match parse_judge_response(&stdout, &check.id) {
         Ok(response) if (0.0..=1.0).contains(&response.score) => response,
         Ok(response) => {
@@ -573,7 +585,7 @@ fn run_judge_check(
         score: Some(response.score),
         duration_ms,
         command: Some(execution.command),
-        exit_code: execution.output.status.code(),
+        exit_code: execution.exit_code,
         standard: check.standard.clone(),
         standard_path: request.standard_path.clone(),
         violations,
@@ -594,7 +606,7 @@ fn invalid_judge_response_result(
     duration_ms: u128,
     reason: String,
 ) -> CheckResult {
-    let output = failure_output(&execution.output.stdout, &execution.output.stderr);
+    let output = failure_output(&execution.stdout, &execution.stderr);
     CheckResult {
         id: check.id.clone(),
         check_type: CheckType::Judge,
@@ -604,7 +616,7 @@ fn invalid_judge_response_result(
         score: Some(0.0),
         duration_ms,
         command: Some(execution.command),
-        exit_code: execution.output.status.code(),
+        exit_code: execution.exit_code,
         standard: check.standard.clone(),
         standard_path: request.standard_path.clone(),
         violations: vec![format!("{reason}; output excerpt: {output}")],
@@ -665,6 +677,7 @@ impl JudgeRunner {
         match self {
             Self::Codex(judge) => judge.run(request, workspace),
             Self::Claude(judge) => judge.run(request, workspace),
+            Self::Litellm(judge) => judge.run(request),
             Self::Command(command) => {
                 let request_path = write_judge_request(request, check_id)?;
                 let output = command.run(&request_path, workspace);
@@ -672,7 +685,10 @@ impl JudgeRunner {
                 let output = output?;
                 remove_result?;
                 Ok(JudgeExecution {
-                    output,
+                    success: output.status.success(),
+                    exit_code: output.status.code(),
+                    stdout: output.stdout,
+                    stderr: output.stderr,
                     command: command.display_command(&request_path),
                     harness: "judge-command",
                     model: None,
@@ -703,7 +719,10 @@ impl ClaudeJudge {
             .collect::<Vec<_>>()
             .join(" ");
         Ok(JudgeExecution {
-            output,
+            success: output.status.success(),
+            exit_code: output.status.code(),
+            stdout: output.stdout,
+            stderr: output.stderr,
             command: display,
             harness: "claude",
             model: self.model.as_ref().map(|model| model.as_str().to_owned()),
@@ -728,11 +747,102 @@ impl CodexJudge {
             .collect::<Vec<_>>()
             .join(" ");
         Ok(JudgeExecution {
-            output,
+            success: output.status.success(),
+            exit_code: output.status.code(),
+            stdout: output.stdout,
+            stderr: output.stderr,
             command: display,
             harness: "codex",
             model: self.model.as_ref().map(|model| model.as_str().to_owned()),
         })
+    }
+}
+
+impl LitellmJudge {
+    fn run(&self, request: &JudgeRequest<'_>) -> anyhow::Result<JudgeExecution> {
+        let request_json =
+            serde_json::to_string_pretty(request).context("failed to serialize judge request")?;
+        let prompt = judge_prompt(&request_json);
+        let api_key = LitellmApiKey::from_env().map_err(|error| anyhow::anyhow!(error))?;
+        let model = self
+            .model
+            .clone()
+            .unwrap_or_else(|| ModelName::new("gpt-5").unwrap_or_else(|err| panic!("{err}")));
+        let client = HttpLitellmApiClient::from_env();
+        let response = block_on_litellm_chat(client.chat_completion(
+            &api_key,
+            LitellmChatRequest {
+                model: model.clone(),
+                prompt,
+            },
+        ))
+        .map_err(|error| anyhow::anyhow!(error))?;
+        let stdout = response.content.unwrap_or_default().into_bytes();
+        let usage = response.usage.map(eval_token_usage);
+        let resolved_model = response.model.unwrap_or(model);
+        Ok(JudgeExecution {
+            success: true,
+            exit_code: Some(0),
+            stdout,
+            stderr: Vec::new(),
+            command: litellm_display_command(),
+            harness: "litellm",
+            model: Some(resolved_model.as_str().to_owned()),
+        }
+        .with_token_usage(usage))
+    }
+}
+
+impl JudgeExecution {
+    fn with_token_usage(mut self, usage: Option<TokenUsage>) -> Self {
+        if let Some(usage) = usage {
+            let response = serde_json::from_slice::<JudgeResponse>(&self.stdout)
+                .ok()
+                .map(|mut response| {
+                    if response.token_usage.is_none() {
+                        response.token_usage = Some(usage);
+                    }
+                    response
+                });
+            if let Some(response) = response
+                && let Ok(bytes) = serde_json::to_vec(&response)
+            {
+                self.stdout = bytes;
+            }
+        }
+        self
+    }
+}
+
+fn eval_token_usage(usage: meter_core::TokenUsage) -> TokenUsage {
+    TokenUsage {
+        input: usage.input_tokens,
+        output: usage.output_tokens,
+        cache_read: usage.cached_input_tokens,
+        total: usage
+            .input_tokens
+            .unwrap_or(0)
+            .checked_add(usage.output_tokens.unwrap_or(0)),
+    }
+}
+
+fn litellm_display_command() -> String {
+    let base = std::env::var(LITELLM_API_BASE_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "https://api.litellm.ai".to_owned());
+    format!("litellm api {base}/v1/chat/completions")
+}
+
+fn block_on_litellm_chat<F>(future: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(future)),
+        Err(_) => tokio::runtime::Runtime::new()
+            .unwrap_or_else(|err| panic!("failed to create Tokio runtime: {err}"))
+            .block_on(future),
     }
 }
 
@@ -1408,6 +1518,25 @@ threshold: 0.85
             Some("judge-unavailable")
         );
         fs::remove_dir_all(workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn judge_config_accepts_litellm_harness_and_model() -> anyhow::Result<()> {
+        let config = JudgeConfig::from_cli(
+            Some(HarnessKind::Litellm),
+            Some("fixture-litellm-model".to_owned()),
+            None,
+            Vec::new(),
+        )?;
+
+        let Some(JudgeRunner::Litellm(judge)) = config.runner else {
+            panic!("expected LiteLLM judge runner");
+        };
+        assert_eq!(
+            judge.model.as_ref().map(ModelName::as_str),
+            Some("fixture-litellm-model")
+        );
         Ok(())
     }
 
