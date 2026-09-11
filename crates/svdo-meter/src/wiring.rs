@@ -233,7 +233,8 @@ mod tests {
 
     #[tokio::test]
     async fn litellm_wiring_registers_api_adapter_and_writes_redacted_failure_telemetry() {
-        let workspace = Some(unique_temp_path("workspace"));
+        let workspace_path = unique_temp_path("workspace");
+        let workspace = Some(workspace_path.clone());
         let engine = engine(
             &workspace,
             HarnessKind::Litellm,
@@ -281,7 +282,7 @@ mod tests {
             assert!(!line.contains(marker));
             assert!(!line.contains("Authorization"));
         }
-        std::fs::remove_dir_all(workspace.unwrap()).unwrap_or_else(|err| panic!("{err}"));
+        std::fs::remove_dir_all(workspace_path).unwrap_or_else(|err| panic!("{err}"));
     }
 
     fn unique_temp_path(file_name: &str) -> std::path::PathBuf {
