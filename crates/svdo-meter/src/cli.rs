@@ -25,7 +25,7 @@ pub enum Commands {
     Eval(EvalArgs),
     #[command(about = "Run measured agent CLI work")]
     #[command(
-        after_help = "Examples:\n  svdo-meter run --ticket ENG-142 --harness codex PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --prompt-file prompt.txt\n  svdo-meter run --ticket ENG-142 --harness codex --codex-profile default PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-sandbox workspace-write --codex-config model_reasoning_effort=high PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --dangerous-bypass PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-yolo PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --model sonnet PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --claude-continue PROMPT"
+        after_help = "Examples:\n  svdo-meter run --ticket ENG-142 --harness codex PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --prompt-file prompt.txt\n  svdo-meter run --ticket ENG-142 --harness codex --codex-profile default PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-sandbox workspace-write --codex-config model_reasoning_effort=high PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --dangerous-bypass PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-yolo PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --model sonnet PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --claude-continue PROMPT\n  svdo-meter run --ticket ENG-142 --harness litellm --model gpt-5 PROMPT\n\nLiteLLM requires LITELLM_API_KEY in the environment. Set LITELLM_API_BASE to target a compatible API base other than the default."
     )]
     Run(Box<RunArgs>),
     #[command(about = "Generate a local SVDO Trace report from JSONL telemetry")]
@@ -50,7 +50,7 @@ pub struct EvalArgs {
 pub enum EvalCommands {
     /// Run one eval by id or file name, or all evals when omitted.
     #[command(
-        after_help = "Examples:\n  svdo-meter eval run\n  svdo-meter eval run add-account-endpoint\n  svdo-meter eval run add-account-endpoint --format json\n  svdo-meter eval run smoke.yaml --format csv\n  svdo-meter eval run --harness codex --model gpt-5\n  svdo-meter eval run --harness claude --model sonnet"
+        after_help = "Examples:\n  svdo-meter eval run\n  svdo-meter eval run add-account-endpoint\n  svdo-meter eval run add-account-endpoint --format json\n  svdo-meter eval run smoke.yaml --format csv\n  svdo-meter eval run --harness codex --model gpt-5\n  svdo-meter eval run --harness claude --model sonnet\n  svdo-meter eval run --harness litellm --model gpt-5"
     )]
     Run(EvalRunArgs),
 }
@@ -65,7 +65,7 @@ pub struct EvalRunArgs {
     #[arg(long)]
     pub workspace: Option<PathBuf>,
 
-    /// Harness used to run judge checks. Supported: codex, claude.
+    /// Harness used to run judge checks. Supported: codex, claude, gemini, litellm.
     #[arg(long, value_name = "HARNESS", conflicts_with = "judge_command")]
     pub harness: Option<HarnessKind>,
 
@@ -101,7 +101,7 @@ pub struct RunArgs {
     #[arg(long)]
     pub label: Option<String>,
 
-    /// Agent CLI harness to execute. Supported: codex, claude.
+    /// Agent CLI harness to execute. Supported: codex, claude, gemini, litellm.
     #[arg(long)]
     pub harness: HarnessKind,
 
@@ -113,7 +113,7 @@ pub struct RunArgs {
     #[arg(long)]
     pub session: Option<String>,
 
-    /// Harness-specific model selection. Passed to Codex or Claude Code.
+    /// Harness-specific model selection. Passed to the selected harness.
     #[arg(long)]
     pub model: Option<String>,
 
@@ -555,6 +555,29 @@ mod tests {
 
         assert_eq!(args.sinks, vec![RunSink::Jsonl, RunSink::Stdout]);
         assert_eq!(args.emit, Some(EmitFormat::Ndjson));
+        Ok(())
+    }
+
+    #[test]
+    fn parses_run_with_litellm_harness() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "run",
+            "--ticket",
+            "ENG-LITELLM",
+            "--harness",
+            "litellm",
+            "--model",
+            "gpt-5",
+            "Do work",
+        ])?;
+        let Commands::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+
+        assert_eq!(args.harness, HarnessKind::Litellm);
+        assert_eq!(args.model.as_deref(), Some("gpt-5"));
+        assert_eq!(resolve_prompt(&args)?, "Do work");
         Ok(())
     }
 
@@ -1075,6 +1098,49 @@ mod tests {
         assert_eq!(args.harness, Some(HarnessKind::Claude));
         assert_eq!(args.model.as_deref(), Some("sonnet"));
         Ok(())
+    }
+
+    #[test]
+    fn parses_eval_run_with_litellm_judge_harness_and_model() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "eval",
+            "run",
+            "--harness",
+            "litellm",
+            "--model",
+            "gpt-5",
+        ])?;
+        let Commands::Eval(args) = cli.command else {
+            panic!("expected eval command");
+        };
+        let EvalCommands::Run(args) = args.command;
+
+        assert_eq!(args.eval, None);
+        assert_eq!(args.harness, Some(HarnessKind::Litellm));
+        assert_eq!(args.model.as_deref(), Some("gpt-5"));
+        Ok(())
+    }
+
+    #[test]
+    fn help_lists_litellm_as_supported_harness() {
+        let help = Cli::command().render_long_help().to_string();
+        let run_help = Cli::command()
+            .find_subcommand_mut("run")
+            .unwrap_or_else(|| panic!("missing run command"))
+            .render_long_help()
+            .to_string();
+        let eval_run_help = Cli::command()
+            .find_subcommand_mut("eval")
+            .and_then(|command| command.find_subcommand_mut("run"))
+            .unwrap_or_else(|| panic!("missing eval run command"))
+            .render_long_help()
+            .to_string();
+
+        assert!(help.contains("svdo-meter"));
+        assert!(run_help.contains("codex, claude, gemini, litellm"));
+        assert!(eval_run_help.contains("codex, claude, gemini, litellm"));
+        assert!(eval_run_help.contains("--harness litellm"));
     }
 
     #[test]

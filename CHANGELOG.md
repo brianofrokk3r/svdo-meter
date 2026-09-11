@@ -1,6 +1,13 @@
 # Changelog
 
 ## 2026-09-11
+
+- Added LiteLLM as a supported `svdo-meter` harness for `run` and eval judge flows, including `--harness litellm` CLI parsing, help text, config mapping, and adapter wiring.
+- Added a direct LiteLLM-compatible API harness that reads `LITELLM_API_KEY` from the environment, supports `LITELLM_API_BASE` for custom API endpoints, and avoids persisting credentials in harness configuration.
+- Added LiteLLM run telemetry handling for successful runs and API or credential failures while preserving durable append-only `.svdo/meter/*.jsonl` output and redacting API key values from errors and telemetry.
+- Added LiteLLM eval judge support so `svdo-meter eval run --harness litellm --model <MODEL>` can score judge checks through the same API-backed path.
+- Added fixture-backed LiteLLM tests for harness selection, missing API key errors, API request mocking, eval compatibility, invalid judge responses, telemetry output, and secret redaction without requiring live LiteLLM credentials or network access.
+- Updated README and CLI documentation with LiteLLM prerequisites, run and eval examples, `LITELLM_API_KEY`, and optional `LITELLM_API_BASE` configuration.
 - Added a fixture-based adapter conformance suite for Codex and Claude normalization that asserts canonical event payloads, session/model context, metrics, and failure state without launching provider CLIs.
 - Added provider/version labels and field-level assertion messages so conformance failures identify the affected fixture and canonical event field.
 - Updated Codex and Claude session discovery normalization to include resolved model context when it is available on the same captured provider event.
