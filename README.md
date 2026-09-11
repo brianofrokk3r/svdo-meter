@@ -1,6 +1,6 @@
 # SVDO Meter
 
-SVDO Meter is a thin telemetry harness for agentic coding CLI sessions.
+SVDO Meter is an open-source telemetry and evaluation layer for AI coding agents. Measure execution, token usage, cost, sessions, tooling behavior, and repository alignment across Codex, Claude Code, and other coding agents.
 
 It associates a ticket/work identifier with an agent CLI run, invokes or resumes the selected harness, normalizes objective events where possible, and writes durable append-only telemetry locally. It is not an orchestration framework, ticketing system, model router, or remote connector.
 
