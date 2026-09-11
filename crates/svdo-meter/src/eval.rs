@@ -1,11 +1,15 @@
 use std::ffi::OsStr;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{Duration, Instant};
+use std::process::{Command, Output};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, bail};
-use serde::Serialize;
+use meter_adapters::{claude_argv, codex_argv};
+use meter_core::{ClaudeConfig, ClaudeRunOptions, CodexConfig, HarnessKind, ModelName};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::cli::ReportFormat;
 
@@ -26,6 +30,72 @@ pub struct CheckDefinition {
     pub required: bool,
     pub weight: f64,
     pub standard: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct JudgeConfig {
+    runner: Option<JudgeRunner>,
+}
+
+#[derive(Debug, Clone)]
+enum JudgeRunner {
+    Codex(CodexJudge),
+    Claude(ClaudeJudge),
+    Command(JudgeCommand),
+}
+
+#[derive(Debug, Clone)]
+struct CodexJudge {
+    model: Option<ModelName>,
+}
+
+#[derive(Debug, Clone)]
+struct ClaudeJudge {
+    model: Option<ModelName>,
+}
+
+#[derive(Debug, Clone)]
+struct JudgeCommand {
+    program: PathBuf,
+    args: Vec<String>,
+}
+
+#[derive(Debug)]
+struct JudgeExecution {
+    output: Output,
+    command: String,
+    harness: &'static str,
+    model: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct JudgeRequest<'a> {
+    eval_id: &'a str,
+    task: &'a str,
+    check_id: &'a str,
+    standard: Option<&'a str>,
+    standard_path: Option<String>,
+    standard_contents: Option<String>,
+    workspace: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct JudgeResponse {
+    score: f64,
+    #[serde(default)]
+    passed: Option<bool>,
+    #[serde(default)]
+    violations: Vec<String>,
+    #[serde(default)]
+    output: Option<String>,
+    #[serde(default)]
+    token_usage: Option<TokenUsage>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    harness: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -106,7 +176,7 @@ pub enum CheckOutcome {
     Skipped,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenUsage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input: Option<u64>,
@@ -118,12 +188,49 @@ pub struct TokenUsage {
     pub total: Option<u64>,
 }
 
-pub fn run(workspace: &Path, requested_eval: Option<&str>) -> anyhow::Result<EvalRunReport> {
+impl JudgeConfig {
+    pub fn from_cli(
+        harness: Option<HarnessKind>,
+        model: Option<String>,
+        command: Option<PathBuf>,
+        args: Vec<String>,
+    ) -> anyhow::Result<Self> {
+        if command.is_some() {
+            return Ok(Self {
+                runner: command.map(|program| JudgeRunner::Command(JudgeCommand { program, args })),
+            });
+        }
+        let Some(harness) = harness else {
+            return Ok(Self::default());
+        };
+        let model = model
+            .map(ModelName::new)
+            .transpose()
+            .context("invalid eval judge --model value")?;
+        match harness {
+            HarnessKind::Codex => Ok(Self {
+                runner: Some(JudgeRunner::Codex(CodexJudge { model })),
+            }),
+            HarnessKind::Claude => Ok(Self {
+                runner: Some(JudgeRunner::Claude(ClaudeJudge { model })),
+            }),
+            HarnessKind::Gemini => {
+                bail!("eval judge --harness currently supports codex and claude")
+            }
+        }
+    }
+}
+
+pub fn run(
+    workspace: &Path,
+    requested_eval: Option<&str>,
+    judge_config: &JudgeConfig,
+) -> anyhow::Result<EvalRunReport> {
     let started = Instant::now();
     let definitions = load_requested_definitions(workspace, requested_eval)?;
     let mut results = Vec::with_capacity(definitions.len());
     for definition in definitions {
-        results.push(run_definition(workspace, definition)?);
+        results.push(run_definition(workspace, definition, judge_config)?);
     }
     Ok(EvalRunReport {
         passed: results.iter().all(|result| result.passed),
@@ -182,11 +289,15 @@ pub fn load_definitions(eval_dir: &Path) -> anyhow::Result<Vec<EvalDefinition>> 
     Ok(definitions)
 }
 
-pub fn run_definition(workspace: &Path, definition: EvalDefinition) -> anyhow::Result<EvalResult> {
+pub fn run_definition(
+    workspace: &Path,
+    definition: EvalDefinition,
+    judge_config: &JudgeConfig,
+) -> anyhow::Result<EvalResult> {
     let started = Instant::now();
     let mut checks = Vec::with_capacity(definition.checks.len());
     for check in &definition.checks {
-        checks.push(run_check(workspace, check)?);
+        checks.push(run_check(workspace, &definition, check, judge_config)?);
     }
     Ok(aggregate_result(
         definition,
@@ -267,10 +378,15 @@ pub fn render(report: &EvalRunReport, format: ReportFormat) -> anyhow::Result<St
     }
 }
 
-fn run_check(workspace: &Path, check: &CheckDefinition) -> anyhow::Result<CheckResult> {
+fn run_check(
+    workspace: &Path,
+    definition: &EvalDefinition,
+    check: &CheckDefinition,
+    judge_config: &JudgeConfig,
+) -> anyhow::Result<CheckResult> {
     match check.check_type {
         CheckType::Command => run_command_check(workspace, check),
-        CheckType::Judge => run_judge_check(workspace, check),
+        CheckType::Judge => run_judge_check(workspace, definition, check, judge_config),
     }
 }
 
@@ -324,32 +440,180 @@ fn run_command_check(workspace: &Path, check: &CheckDefinition) -> anyhow::Resul
     })
 }
 
-fn run_judge_check(workspace: &Path, check: &CheckDefinition) -> anyhow::Result<CheckResult> {
+fn run_judge_check(
+    workspace: &Path,
+    definition: &EvalDefinition,
+    check: &CheckDefinition,
+    judge_config: &JudgeConfig,
+) -> anyhow::Result<CheckResult> {
     let started = Instant::now();
     let standard_path = check
         .standard
         .as_deref()
         .map(|standard| resolve_standard(workspace, standard))
         .transpose()?;
+    let Some(runner) = &judge_config.runner else {
+        return Ok(CheckResult {
+            id: check.id.clone(),
+            check_type: CheckType::Judge,
+            outcome: CheckOutcome::Skipped,
+            required: check.required,
+            weight: check.weight,
+            score: None,
+            duration_ms: elapsed_ms(started.elapsed()),
+            command: None,
+            exit_code: None,
+            standard: check.standard.clone(),
+            standard_path: standard_path.map(|path| path.display().to_string()),
+            violations: vec!["judge checks require a configured judge harness".to_owned()],
+            output: None,
+            token_usage: None,
+            model: None,
+            harness: Some("judge-unavailable".to_owned()),
+            session_id: None,
+        });
+    };
+
+    let standard_contents = standard_path
+        .as_deref()
+        .map(|path| {
+            fs::read_to_string(path)
+                .with_context(|| format!("failed to read standard `{}`", path.display()))
+        })
+        .transpose()?;
+    let request = JudgeRequest {
+        eval_id: &definition.id,
+        task: &definition.task,
+        check_id: &check.id,
+        standard: check.standard.as_deref(),
+        standard_path: standard_path
+            .as_ref()
+            .map(|path| path.display().to_string()),
+        standard_contents,
+        workspace: workspace.display().to_string(),
+    };
+    let execution = runner
+        .run(&request, workspace, &check.id)
+        .with_context(|| format!("failed to execute judge check `{}`", check.id));
+    let execution = execution?;
+    let duration_ms = elapsed_ms(started.elapsed());
+    if !execution.output.status.success() {
+        return Ok(CheckResult {
+            id: check.id.clone(),
+            check_type: CheckType::Judge,
+            outcome: CheckOutcome::Failed,
+            required: check.required,
+            weight: check.weight,
+            score: Some(0.0),
+            duration_ms,
+            command: Some(execution.command),
+            exit_code: execution.output.status.code(),
+            standard: check.standard.clone(),
+            standard_path: request.standard_path.clone(),
+            violations: vec![format!(
+                "judge exited with status {}",
+                execution.output.status.code().map_or_else(
+                    || "terminated by signal".to_owned(),
+                    |code| code.to_string()
+                )
+            )],
+            output: Some(failure_output(
+                &execution.output.stdout,
+                &execution.output.stderr,
+            )),
+            token_usage: None,
+            model: execution.model,
+            harness: Some(execution.harness.to_owned()),
+            session_id: None,
+        });
+    }
+    let stdout = String::from_utf8_lossy(&execution.output.stdout);
+    let response = match parse_judge_response(&stdout, &check.id) {
+        Ok(response) if (0.0..=1.0).contains(&response.score) => response,
+        Ok(response) => {
+            return Ok(invalid_judge_response_result(
+                check,
+                &request,
+                execution,
+                duration_ms,
+                format!(
+                    "judge response for eval `{}` check `{}` emitted score {}; expected 0.0 through 1.0",
+                    definition.id, check.id, response.score
+                ),
+            ));
+        }
+        Err(error) => {
+            return Ok(invalid_judge_response_result(
+                check,
+                &request,
+                execution,
+                duration_ms,
+                format!(
+                    "invalid judge response for eval `{}` check `{}`: {error}",
+                    definition.id, check.id
+                ),
+            ));
+        }
+    };
+    let passed = response.passed.unwrap_or(response.score >= 1.0);
+    let mut violations = response.violations;
+    if !passed && violations.is_empty() {
+        violations.push(format!("judge score {:.2} did not pass", response.score));
+    }
     Ok(CheckResult {
         id: check.id.clone(),
         check_type: CheckType::Judge,
-        outcome: CheckOutcome::Skipped,
+        outcome: if passed {
+            CheckOutcome::Passed
+        } else {
+            CheckOutcome::Failed
+        },
         required: check.required,
         weight: check.weight,
-        score: None,
-        duration_ms: elapsed_ms(started.elapsed()),
-        command: None,
-        exit_code: None,
+        score: Some(response.score),
+        duration_ms,
+        command: Some(execution.command),
+        exit_code: execution.output.status.code(),
         standard: check.standard.clone(),
-        standard_path: standard_path.map(|path| path.display().to_string()),
-        violations: vec!["judge checks require a configured judge harness".to_owned()],
-        output: None,
-        token_usage: None,
-        model: None,
-        harness: Some("judge-unavailable".to_owned()),
-        session_id: None,
+        standard_path: request.standard_path.clone(),
+        violations,
+        output: response.output.map(|value| truncate(&value, 4_000)),
+        token_usage: response.token_usage,
+        model: response.model.or(execution.model),
+        harness: response
+            .harness
+            .or_else(|| Some(execution.harness.to_owned())),
+        session_id: response.session_id,
     })
+}
+
+fn invalid_judge_response_result(
+    check: &CheckDefinition,
+    request: &JudgeRequest<'_>,
+    execution: JudgeExecution,
+    duration_ms: u128,
+    reason: String,
+) -> CheckResult {
+    let output = failure_output(&execution.output.stdout, &execution.output.stderr);
+    CheckResult {
+        id: check.id.clone(),
+        check_type: CheckType::Judge,
+        outcome: CheckOutcome::Failed,
+        required: check.required,
+        weight: check.weight,
+        score: Some(0.0),
+        duration_ms,
+        command: Some(execution.command),
+        exit_code: execution.output.status.code(),
+        standard: check.standard.clone(),
+        standard_path: request.standard_path.clone(),
+        violations: vec![format!("{reason}; output excerpt: {output}")],
+        output: Some(output),
+        token_usage: None,
+        model: execution.model,
+        harness: Some(execution.harness.to_owned()),
+        session_id: None,
+    }
 }
 
 fn resolve_standard(workspace: &Path, standard: &str) -> anyhow::Result<PathBuf> {
@@ -369,6 +633,269 @@ fn resolve_standard(workspace: &Path, standard: &str) -> anyhow::Result<PathBuf>
                 standards_dir.display()
             )
         })
+}
+
+impl JudgeCommand {
+    fn run(&self, request_path: &Path, workspace: &Path) -> std::io::Result<Output> {
+        let mut command = Command::new(&self.program);
+        command
+            .args(&self.args)
+            .arg(request_path)
+            .env("SVDO_METER_JUDGE_REQUEST", request_path)
+            .current_dir(workspace)
+            .output()
+    }
+
+    fn display_command(&self, request_path: &Path) -> String {
+        let mut parts = Vec::with_capacity(self.args.len() + 2);
+        parts.push(self.program.display().to_string());
+        parts.extend(self.args.iter().cloned());
+        parts.push(request_path.display().to_string());
+        parts.join(" ")
+    }
+}
+
+impl JudgeRunner {
+    fn run(
+        &self,
+        request: &JudgeRequest<'_>,
+        workspace: &Path,
+        check_id: &str,
+    ) -> anyhow::Result<JudgeExecution> {
+        match self {
+            Self::Codex(judge) => judge.run(request, workspace),
+            Self::Claude(judge) => judge.run(request, workspace),
+            Self::Command(command) => {
+                let request_path = write_judge_request(request, check_id)?;
+                let output = command.run(&request_path, workspace);
+                let remove_result = remove_judge_request(&request_path);
+                let output = output?;
+                remove_result?;
+                Ok(JudgeExecution {
+                    output,
+                    command: command.display_command(&request_path),
+                    harness: "judge-command",
+                    model: None,
+                })
+            }
+        }
+    }
+}
+
+impl ClaudeJudge {
+    fn run(&self, request: &JudgeRequest<'_>, workspace: &Path) -> anyhow::Result<JudgeExecution> {
+        let request_json =
+            serde_json::to_string_pretty(request).context("failed to serialize judge request")?;
+        let prompt = judge_prompt(&request_json);
+        let config = ClaudeConfig::default();
+        let options = ClaudeRunOptions::default();
+        let args = claude_argv(self.model.as_ref(), None, &options, &prompt)
+            .map_err(|error| anyhow::anyhow!(error))
+            .context("failed to build Claude judge arguments")?;
+        let mut command = Command::new(&config.binary);
+        let output = command
+            .args(&args)
+            .current_dir(workspace)
+            .output()
+            .with_context(|| format!("failed to execute `{}`", config.binary.display()))?;
+        let display = std::iter::once(config.binary.display().to_string())
+            .chain(args.iter().map(|arg| arg.to_string_lossy().into_owned()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        Ok(JudgeExecution {
+            output,
+            command: display,
+            harness: "claude",
+            model: self.model.as_ref().map(|model| model.as_str().to_owned()),
+        })
+    }
+}
+
+impl CodexJudge {
+    fn run(&self, request: &JudgeRequest<'_>, workspace: &Path) -> anyhow::Result<JudgeExecution> {
+        let request_json =
+            serde_json::to_string_pretty(request).context("failed to serialize judge request")?;
+        let prompt = judge_prompt(&request_json);
+        let config = CodexConfig::default();
+        let args = codex_argv(&config, Some(workspace), self.model.as_ref(), None, &prompt);
+        let mut command = Command::new(&config.binary);
+        let output = command
+            .args(&args)
+            .output()
+            .with_context(|| format!("failed to execute `{}`", config.binary.display()))?;
+        let display = std::iter::once(config.binary.display().to_string())
+            .chain(args.iter().map(|arg| arg.to_string_lossy().into_owned()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        Ok(JudgeExecution {
+            output,
+            command: display,
+            harness: "codex",
+            model: self.model.as_ref().map(|model| model.as_str().to_owned()),
+        })
+    }
+}
+
+fn judge_prompt(request_json: &str) -> String {
+    format!(
+        "You are evaluating an SVDO repository alignment check.\n\
+Return only one JSON object with this schema:\n\
+{{\"score\": number from 0.0 to 1.0, \"passed\": boolean, \"violations\": string[]}}\n\
+Do not include Markdown or explanatory text outside the JSON object.\n\n\
+Judge request:\n{request_json}"
+    )
+}
+
+fn parse_judge_response(stdout: &str, check_id: &str) -> anyhow::Result<JudgeResponse> {
+    let trimmed = stdout.trim();
+    if let Ok(response) = serde_json::from_str::<JudgeResponse>(trimmed) {
+        return Ok(response);
+    }
+    for line in trimmed
+        .lines()
+        .rev()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        if let Ok(response) = serde_json::from_str::<JudgeResponse>(line) {
+            return Ok(response);
+        }
+        if let Ok(value) = serde_json::from_str::<Value>(line)
+            && let Some(response) = judge_response_from_value(&value)?
+        {
+            return Ok(response);
+        }
+    }
+    if let Some(response) = judge_response_from_text(trimmed)? {
+        return Ok(response);
+    }
+    bail!("judge check `{check_id}` must emit JSON with a numeric `score` field")
+}
+
+fn judge_response_from_value(value: &Value) -> anyhow::Result<Option<JudgeResponse>> {
+    if value.get("score").is_some() {
+        return serde_json::from_value(value.clone())
+            .map(Some)
+            .context("failed to parse judge response");
+    }
+    for key in [
+        "message",
+        "content",
+        "output",
+        "text",
+        "final_answer",
+        "result",
+    ] {
+        if let Some(text) = value.get(key).and_then(Value::as_str)
+            && let Some(response) = judge_response_from_text(text)?
+        {
+            return Ok(Some(response));
+        }
+    }
+    for key in ["message", "item", "data", "response"] {
+        if let Some(nested) = value.get(key)
+            && let Some(response) = judge_response_from_value(nested)?
+        {
+            return Ok(Some(response));
+        }
+    }
+    if let Some(content) = value.get("content").and_then(Value::as_array) {
+        for item in content {
+            if let Some(response) = judge_response_from_value(item)? {
+                return Ok(Some(response));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn judge_response_from_text(text: &str) -> anyhow::Result<Option<JudgeResponse>> {
+    let trimmed = text.trim();
+    if let Ok(response) = serde_json::from_str::<JudgeResponse>(trimmed) {
+        return Ok(Some(response));
+    }
+    let Some(start) = trimmed.find('{') else {
+        return Ok(None);
+    };
+    let Some(end) = trimmed.rfind('}') else {
+        return Ok(None);
+    };
+    if start >= end {
+        return Ok(None);
+    }
+    serde_json::from_str::<JudgeResponse>(&trimmed[start..=end])
+        .map(Some)
+        .or(Ok(None))
+}
+
+fn write_judge_request(request: &JudgeRequest<'_>, check_id: &str) -> anyhow::Result<PathBuf> {
+    let bytes = serde_json::to_vec_pretty(request).context("failed to serialize judge request")?;
+    let mut last_error = None;
+    for attempt in 0..10 {
+        let path = std::env::temp_dir().join(format!(
+            "svdo-meter-judge-{}-{}-{}-{}.json",
+            std::process::id(),
+            timestamp_nanos(),
+            attempt,
+            sanitize_file_component(check_id)
+        ));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                use std::io::Write as _;
+
+                file.write_all(&bytes).with_context(|| {
+                    format!("failed to write judge request `{}`", path.display())
+                })?;
+                return Ok(path);
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists && attempt < 9 => {
+                last_error = Some(error);
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "failed to create judge request in `{}`",
+                        std::env::temp_dir().display()
+                    )
+                });
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| std::io::Error::other("temporary file already exists")))
+        .context("failed to create unique judge request file")
+}
+
+fn remove_judge_request(path: &Path) -> anyhow::Result<()> {
+    fs::remove_file(path)
+        .with_context(|| format!("failed to remove judge request `{}`", path.display()))
+}
+
+fn timestamp_nanos() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos())
+}
+
+fn sanitize_file_component(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "check".to_owned()
+    } else {
+        sanitized
+    }
 }
 
 fn validate_definition(definition: &EvalDefinition, path: &Path) -> anyhow::Result<()> {
@@ -844,12 +1371,69 @@ threshold: 0.85
             source_path: None,
         };
 
-        let result = run_definition(&workspace, definition)?;
+        let result = run_definition(&workspace, definition, &JudgeConfig::default())?;
 
         assert!(result.passed);
         assert_eq!(result.checks[0].outcome, CheckOutcome::Passed);
         fs::remove_dir_all(workspace)?;
         Ok(())
+    }
+
+    #[test]
+    fn skips_judge_checks_without_configured_command() -> anyhow::Result<()> {
+        let workspace = unique_temp_path("svdo-meter-eval-judge-skip");
+        fs::create_dir_all(&workspace)?;
+        let definition = EvalDefinition {
+            id: "judge".to_owned(),
+            task: "Judge work".to_owned(),
+            checks: vec![CheckDefinition {
+                id: "architecture".to_owned(),
+                check_type: CheckType::Judge,
+                command: None,
+                required: false,
+                weight: 1.0,
+                standard: None,
+            }],
+            threshold: 0.0,
+            source_path: None,
+        };
+
+        let result = run_definition(&workspace, definition, &JudgeConfig::default())?;
+
+        assert!(result.passed);
+        assert_eq!(result.checks[0].outcome, CheckOutcome::Skipped);
+        assert_eq!(result.checks[0].score, None);
+        assert_eq!(
+            result.checks[0].harness.as_deref(),
+            Some("judge-unavailable")
+        );
+        fs::remove_dir_all(workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn parses_codex_item_text_judge_response() -> anyhow::Result<()> {
+        let response = parse_judge_response(
+            r#"{"type":"item.completed","item":{"type":"agent_message","text":"{\"score\":0.75,\"passed\":false,\"violations\":[\"needs tighter CLI output\"]}"}}"#,
+            "cli-design",
+        )?;
+
+        assert_eq!(response.score, 0.75);
+        assert_eq!(response.passed, Some(false));
+        assert_eq!(response.violations, ["needs tighter CLI output"]);
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_judge_response_error_includes_check_name() {
+        let error = parse_judge_response("not json", "cli-design")
+            .expect_err("missing score should fail parsing");
+
+        assert!(
+            error
+                .to_string()
+                .contains("judge check `cli-design` must emit JSON with a numeric `score` field")
+        );
     }
 
     #[test]
