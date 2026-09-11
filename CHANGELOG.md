@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-11
+
+- Added README-visible discovery keywords for AI agent, coding agent, observability, LLM, Codex, Claude Code, and developer tooling searches.
+- Added a 30-second SVDO Meter example showing a measured `svdo-meter run`, the resulting `.svdo/meter/<run-id>.jsonl` artifact, and a fixture-backed `SVDO Trace` report.
+- Expanded CLI documentation with practical JSONL telemetry event shape guidance, including envelope fields, tagged payloads, optional token fields, terminal metrics, and current canonical event payload expectations.
+
 ## 2026-08-28
 
 - Added a top-level GitHub installer script for installing prebuilt `svdo-meter` release binaries without cloning the repository.
