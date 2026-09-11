@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-11
+
+- Added a fixture-based adapter conformance suite for Codex and Claude normalization that asserts canonical event payloads, session/model context, metrics, and failure state without launching provider CLIs.
+- Added provider/version labels and field-level assertion messages so conformance failures identify the affected fixture and canonical event field.
+- Updated Codex and Claude session discovery normalization to include resolved model context when it is available on the same captured provider event.
+
 ## 2026-09-10
 
 - Updated `svdo-meter eval run` judge handling so Codex and Claude judge checks can be configured with `--harness` and `--model`, and custom judge programs can be configured with `--judge-command`.
