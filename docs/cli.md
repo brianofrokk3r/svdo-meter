@@ -38,6 +38,55 @@ cargo run -p svdo-meter -- telemetry --help
 
 Build and install instructions are in [compile.md](compile.md).
 
+## 30-Second Example
+
+Start with a repository workspace and a ticket or work id:
+
+```bash
+svdo-meter run \
+  --ticket ENG-142 \
+  --label "Add password reset flow" \
+  --harness codex \
+  --workspace ~/code/app \
+  "Implement the password reset flow described in ENG-142"
+
+svdo-meter report ENG-142 --workspace ~/code/app
+```
+
+Expected result at a high level:
+
+- telemetry is appended under `~/code/app/.svdo/meter/<run-id>.jsonl`
+- `svdo-meter report` renders a local SVDO Trace grouped by work id
+- future runs for the same ticket, harness, and workspace can reuse discovered sessions when available
+
+Example terminal report output:
+
+```text
+SVDO Trace
+────────────────────────────
+
+Work
+  ENG-142
+
+Harness
+  codex
+
+Session
+  019c8a-fixture
+
+Runs
+  2
+
+Agent Time
+  18m 42s
+
+Tokens
+  Input   120,000
+  Output  42,000
+  Cache   32,213
+  Total   194,213
+```
+
 ## `svdo-meter run`
 
 Starts or resumes measured agent CLI work and appends canonical telemetry locally.
@@ -505,7 +554,49 @@ Each JSONL line is one canonical event with common metadata such as:
 - `workspace`
 - `payload`
 
-For `run.started`, the payload includes `execution_permission` when SVDO Meter can determine the requested execution posture. Current values are `standard` and `dangerous-bypass`.
+### JSONL Event Shape
+
+Every line is a complete JSON object. The common envelope is intended to be practical and durable for local reporting:
+
+| Field | Description |
+|---|---|
+| `schema_version` | Integer schema marker for the serialized event. Current emitted version is `1`. |
+| `event_id` | Unique event identifier. |
+| `event_type` | Canonical event name such as `run.started` or `usage.reported`. |
+| `occurred_at` | UTC timestamp for when the event occurred. |
+| `observed_at` | UTC timestamp for when SVDO Meter observed the event. |
+| `run_id` | SVDO Meter run identifier shared by events from one measured run. |
+| `ticket_id` | Required work identifier supplied with `--ticket`; reports group by this value. |
+| `label` | Optional human-readable label copied from `--label`. |
+| `harness` | Harness name, currently `codex` or `claude`. |
+| `requested_model` | Optional model requested through the CLI. |
+| `resolved_model` | Optional provider-resolved model name when the harness reports one. |
+| `session_id` | Optional provider session/thread id. |
+| `workspace` | Optional workspace path used as the telemetry base. |
+| `payload` | Event-specific payload envelope. |
+
+The payload uses a tagged shape:
+
+```json
+{
+  "payload": {
+    "type": "usage_reported",
+    "data": {
+      "input_tokens": 120000,
+      "cached_input_tokens": 32213,
+      "output_tokens": 42000
+    }
+  }
+}
+```
+
+The payload `type` is the snake_case form of the canonical `event_type`. For example, `run.started` uses `run_started`, and `session.discovered` uses `session_discovered`.
+
+Token fields are optional. A missing token component means the harness did not report that component; it is distinct from an explicit `0`.
+
+For `run.started`, the payload includes `prompt_recorded` and may include `execution_permission` when SVDO Meter can determine the requested execution posture. Current `execution_permission` values are `standard` and `dangerous-bypass`.
+
+Terminal events use `run_completed` or `run_failed` payloads with `metrics`. Metrics currently include wall time, active time, command/tool time, turn count, provider event count, command counts, file-change counts, tool calls, errors, and token usage.
 
 ## Canonical Event Types
 
@@ -524,6 +615,24 @@ The v0.1 event model includes:
 - `run.failed`
 
 Unknown provider events are tolerated and do not fail the run. Raw provider payloads are only retained when explicit raw retention is enabled.
+
+### Event Payload Guide
+
+| Event type | Typical payload data |
+|---|---|
+| `run.started` | `prompt_recorded`, optional `execution_permission`. |
+| `session.discovered` | `source`, with `session_id` in the common envelope. |
+| `harness.event` | Provider event name and whether raw payload retention was enabled. |
+| `usage.reported` | Optional token fields: input, cached input, cache write, output, and reasoning tokens. |
+| `command.started` | Optional command id and command kind. |
+| `command.completed` | Optional command id, success flag, optional exit code, optional duration. |
+| `files.changed` | Count of changed files. |
+| `tool.started` | Optional tool id and tool name. |
+| `tool.completed` | Optional tool id/name, success flag, optional duration. |
+| `run.completed` | Final metrics and optional process exit code. |
+| `run.failed` | Final metrics, failure reason, and optional process exit code. |
+
+Consumers should prefer the canonical fields above and tolerate missing optional fields. The exact provider-specific source event names inside `harness.event` are adapter details and may vary as Codex or Claude Code change their streams.
 
 ## Metrics
 

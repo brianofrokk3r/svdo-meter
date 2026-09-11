@@ -349,18 +349,14 @@ impl ClaudeEventNormalizer {
         self.metrics.provider_event_count = self.metrics.provider_event_count.saturating_add(1);
         let source_event = event_name(&parsed);
         let mut events = Vec::new();
-
-        if let Some(session_id) = discover_session_id(&parsed)
+        let discovered_session = if let Some(session_id) = discover_session_id(&parsed)
             && self.session_id.as_ref() != Some(&session_id)
         {
-            self.session_id = Some(session_id.clone());
-            events.push(MeterEvent::new(
-                self.context.with_session(Some(session_id)),
-                EventPayload::SessionDiscovered(SessionDiscovered {
-                    source: "claude".to_owned(),
-                }),
-            ));
-        }
+            self.session_id = Some(session_id);
+            true
+        } else {
+            false
+        };
         if let Some(model) = string_field_any_path(&parsed, &[&["model"], &["message", "model"]])
             && let Ok(model) = meter_core::ModelName::new(model)
         {
@@ -371,6 +367,14 @@ impl ClaudeEventNormalizer {
             .context
             .with_session(self.session_id.clone())
             .with_resolved_model(self.resolved_model.clone());
+        if discovered_session {
+            events.push(MeterEvent::new(
+                context.clone(),
+                EventPayload::SessionDiscovered(SessionDiscovered {
+                    source: "claude".to_owned(),
+                }),
+            ));
+        }
         if let Some(usage) = token_usage(&parsed) {
             self.metrics.token_usage.add_assign(&usage);
             events.push(MeterEvent::new(
