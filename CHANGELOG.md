@@ -8,6 +8,13 @@
 - Added LiteLLM eval judge support so `svdo-meter eval run --harness litellm --model <MODEL>` can score judge checks through the same API-backed path.
 - Added fixture-backed LiteLLM tests for harness selection, missing API key errors, API request mocking, eval compatibility, invalid judge responses, telemetry output, and secret redaction without requiring live LiteLLM credentials or network access.
 - Updated README and CLI documentation with LiteLLM prerequisites, run and eval examples, `LITELLM_API_KEY`, and optional `LITELLM_API_BASE` configuration.
+- Added a fixture-based adapter conformance suite for Codex and Claude normalization that asserts canonical event payloads, session/model context, metrics, and failure state without launching provider CLIs.
+- Added provider/version labels and field-level assertion messages so conformance failures identify the affected fixture and canonical event field.
+- Updated Codex and Claude session discovery normalization to include resolved model context when it is available on the same captured provider event.
+- Standardized Cargo workspace license metadata to MIT so all crates inherit the same license as the root `LICENSE`.
+- Added README-visible discovery keywords for AI agent, coding agent, observability, LLM, Codex, Claude Code, and developer tooling searches.
+- Added a 30-second SVDO Meter example showing a measured `svdo-meter run`, the resulting `.svdo/meter/<run-id>.jsonl` artifact, and a fixture-backed `SVDO Trace` report.
+- Expanded CLI documentation with practical JSONL telemetry event shape guidance, including envelope fields, tagged payloads, optional token fields, terminal metrics, and current canonical event payload expectations.
 
 ## 2026-09-10
 
