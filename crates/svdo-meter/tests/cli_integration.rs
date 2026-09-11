@@ -184,6 +184,293 @@ threshold: 1.0
 }
 
 #[test]
+fn eval_judge_command_scores_judge_checks() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-eval-judge-integration");
+    write_eval_definition(
+        &workspace,
+        "judge.yaml",
+        r#"
+id: judge
+task: Review architecture.
+checks:
+  - id: architecture
+    type: judge
+    standard: architecture
+    required: true
+    weight: 1.0
+threshold: 1.0
+"#,
+    )?;
+    write_standard(
+        &workspace,
+        "architecture.md",
+        "Prefer direct process execution.",
+    )?;
+    let judge = write_executable(
+        &workspace,
+        "judge.sh",
+        r#"#!/bin/sh
+test -f "$1" || exit 9
+test "$SVDO_METER_JUDGE_REQUEST" = "$1" || exit 10
+grep -q '"standard": "architecture"' "$1" || exit 11
+printf '{"score": 1.0, "passed": true, "violations": [], "model": "fixture-model", "harness": "fixture-judge"}'
+"#,
+    )?;
+
+    let output = run_svdo_meter(&[
+        "eval",
+        "run",
+        "judge",
+        "--workspace",
+        path_str(&workspace)?,
+        "--judge-command",
+        path_str(&judge)?,
+        "--format",
+        "json",
+    ]);
+
+    assert!(output.status.success());
+    assert_stdout_contains(&output, "\"outcome\": \"passed\"");
+    assert_stdout_contains(&output, "\"score\": 1.0");
+    assert_stdout_contains(&output, "\"model\": \"fixture-model\"");
+    assert_stdout_contains(&output, "\"harness\": \"fixture-judge\"");
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn eval_codex_judge_harness_scores_judge_checks() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-eval-codex-judge-integration");
+    write_eval_definition(
+        &workspace,
+        "codex-judge.yaml",
+        r#"
+id: codex-judge
+task: Review architecture.
+checks:
+  - id: architecture
+    type: judge
+    standard: architecture
+    required: true
+    weight: 1.0
+threshold: 1.0
+"#,
+    )?;
+    write_standard(
+        &workspace,
+        "architecture.md",
+        "Prefer direct process execution.",
+    )?;
+    let bin_dir = workspace.join("bin");
+    let codex = write_executable(
+        &bin_dir,
+        "codex",
+        r#"#!/bin/sh
+test "$1" = "exec" || exit 9
+test "$2" = "--json" || exit 10
+case "$*" in
+  *"--model gpt-5"*) ;;
+  *) exit 11 ;;
+esac
+printf '{"type":"agent_message","message":"{\"score\":1.0,\"passed\":true,\"violations\":[],\"model\":\"gpt-5\",\"harness\":\"codex\"}"}\n'
+"#,
+    )?;
+
+    let output = run_svdo_meter_with_path(
+        &[
+            "eval",
+            "run",
+            "codex-judge",
+            "--workspace",
+            path_str(&workspace)?,
+            "--harness",
+            "codex",
+            "--model",
+            "gpt-5",
+            "--format",
+            "json",
+        ],
+        codex
+            .parent()
+            .ok_or_else(|| std::io::Error::other("missing bin dir"))?,
+    );
+
+    assert!(output.status.success());
+    assert_stdout_contains(&output, "\"outcome\": \"passed\"");
+    assert_stdout_contains(&output, "\"model\": \"gpt-5\"");
+    assert_stdout_contains(&output, "\"harness\": \"codex\"");
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn eval_claude_judge_harness_scores_judge_checks() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-eval-claude-judge-integration");
+    write_eval_definition(
+        &workspace,
+        "claude-judge.yaml",
+        r#"
+id: claude-judge
+task: Review architecture.
+checks:
+  - id: architecture
+    type: judge
+    standard: architecture
+    required: true
+    weight: 1.0
+threshold: 1.0
+"#,
+    )?;
+    write_standard(
+        &workspace,
+        "architecture.md",
+        "Prefer direct process execution.",
+    )?;
+    let bin_dir = workspace.join("bin");
+    let claude = write_executable(
+        &bin_dir,
+        "claude",
+        r#"#!/bin/sh
+test "$1" = "-p" || exit 9
+case "$*" in
+  *"--output-format stream-json"*) ;;
+  *) exit 10 ;;
+esac
+case "$*" in
+  *"--model sonnet"*) ;;
+  *) exit 11 ;;
+esac
+printf '{"type":"assistant","message":{"model":"sonnet","content":[{"type":"text","text":"{\"score\":1.0,\"passed\":true,\"violations\":[],\"model\":\"sonnet\",\"harness\":\"claude\"}"}]}}\n'
+"#,
+    )?;
+
+    let output = run_svdo_meter_with_path(
+        &[
+            "eval",
+            "run",
+            "claude-judge",
+            "--workspace",
+            path_str(&workspace)?,
+            "--harness",
+            "claude",
+            "--model",
+            "sonnet",
+            "--format",
+            "json",
+        ],
+        claude
+            .parent()
+            .ok_or_else(|| std::io::Error::other("missing bin dir"))?,
+    );
+
+    assert!(output.status.success());
+    assert_stdout_contains(&output, "\"outcome\": \"passed\"");
+    assert_stdout_contains(&output, "\"model\": \"sonnet\"");
+    assert_stdout_contains(&output, "\"harness\": \"claude\"");
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn eval_fails_when_required_judge_rejects_work() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-eval-judge-fail-integration");
+    write_eval_definition(
+        &workspace,
+        "judge-fail.yaml",
+        r#"
+id: judge-fail
+task: Review implementation.
+checks:
+  - id: architecture
+    type: judge
+    required: true
+    weight: 1.0
+threshold: 0.8
+"#,
+    )?;
+    let judge = write_executable(
+        &workspace,
+        "judge.sh",
+        r#"#!/bin/sh
+printf '{"score": 0.25, "passed": false, "violations": ["missing architecture evidence"]}'
+"#,
+    )?;
+
+    let output = run_svdo_meter(&[
+        "eval",
+        "run",
+        "judge-fail",
+        "--workspace",
+        path_str(&workspace)?,
+        "--judge-command",
+        path_str(&judge)?,
+    ]);
+
+    assert!(!output.status.success());
+    assert_stdout_contains(&output, "FAIL");
+    assert_stdout_contains(&output, "Failed checks: architecture");
+    assert_stdout_contains(&output, "missing architecture evidence");
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn eval_reports_invalid_judge_response_with_context() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-eval-judge-invalid-integration");
+    write_eval_definition(
+        &workspace,
+        "judge-invalid.yaml",
+        r#"
+id: judge-invalid
+task: Review CLI design.
+checks:
+  - id: cli-design
+    type: judge
+    standard: cli-design
+    required: true
+    weight: 1.0
+threshold: 1.0
+"#,
+    )?;
+    write_standard(
+        &workspace,
+        "cli-design.md",
+        "Keep command-line output precise and actionable.",
+    )?;
+    let judge = write_executable(
+        &workspace,
+        "judge.sh",
+        r#"#!/bin/sh
+printf 'I checked the CLI and it looks okay, but forgot the score field.'
+"#,
+    )?;
+
+    let output = run_svdo_meter(&[
+        "eval",
+        "run",
+        "judge-invalid",
+        "--workspace",
+        path_str(&workspace)?,
+        "--judge-command",
+        path_str(&judge)?,
+        "--format",
+        "json",
+    ]);
+
+    assert!(!output.status.success());
+    assert_stdout_contains(&output, "\"id\": \"judge-invalid\"");
+    assert_stdout_contains(&output, "\"id\": \"cli-design\"");
+    assert_stdout_contains(&output, "\"outcome\": \"failed\"");
+    assert_stdout_contains(
+        &output,
+        "invalid judge response for eval `judge-invalid` check `cli-design`",
+    );
+    assert_stdout_contains(&output, "forgot the score field");
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
 fn repo_sample_evals_are_runnable() {
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
     let output = run_svdo_meter(&[
@@ -370,6 +657,19 @@ fn run_svdo_meter(args: &[&str]) -> Output {
         .unwrap_or_else(|error| panic!("failed to run svdo-meter: {error}"))
 }
 
+fn run_svdo_meter_with_path(args: &[&str], path_prefix: &Path) -> Output {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let path = std::env::join_paths(
+        std::iter::once(path_prefix.to_path_buf()).chain(std::env::split_paths(&path)),
+    )
+    .unwrap_or_else(|error| panic!("failed to build PATH: {error}"));
+    Command::new(env!("CARGO_BIN_EXE_svdo-meter"))
+        .args(args)
+        .env("PATH", path)
+        .output()
+        .unwrap_or_else(|error| panic!("failed to run svdo-meter: {error}"))
+}
+
 fn write_workspace_telemetry_streams(workspace: &Path, contents: &str) -> std::io::Result<()> {
     let meter_dir = workspace.join(".svdo").join("meter");
     fs::create_dir_all(&meter_dir)?;
@@ -390,6 +690,27 @@ fn write_eval_definition(workspace: &Path, file_name: &str, contents: &str) -> s
     let eval_dir = workspace.join(".svdo").join("evals");
     fs::create_dir_all(&eval_dir)?;
     fs::write(eval_dir.join(file_name), contents)
+}
+
+fn write_standard(workspace: &Path, file_name: &str, contents: &str) -> std::io::Result<()> {
+    let standard_dir = workspace.join(".svdo").join("standards");
+    fs::create_dir_all(&standard_dir)?;
+    fs::write(standard_dir.join(file_name), contents)
+}
+
+fn write_executable(workspace: &Path, file_name: &str, contents: &str) -> std::io::Result<PathBuf> {
+    fs::create_dir_all(workspace)?;
+    let path = workspace.join(file_name);
+    fs::write(&path, contents)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let mut permissions = fs::metadata(&path)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions)?;
+    }
+    Ok(path)
 }
 
 fn path_str(path: &Path) -> std::io::Result<&str> {

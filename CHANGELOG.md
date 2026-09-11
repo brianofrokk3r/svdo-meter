@@ -1,8 +1,17 @@
 # Changelog
 
 ## 2026-09-11
-
 - Standardized Cargo workspace license metadata to MIT so all crates inherit the same license as the root `LICENSE`.
+- Added README-visible discovery keywords for AI agent, coding agent, observability, LLM, Codex, Claude Code, and developer tooling searches.
+- Added a 30-second SVDO Meter example showing a measured `svdo-meter run`, the resulting `.svdo/meter/<run-id>.jsonl` artifact, and a fixture-backed `SVDO Trace` report.
+- Expanded CLI documentation with practical JSONL telemetry event shape guidance, including envelope fields, tagged payloads, optional token fields, terminal metrics, and current canonical event payload expectations.
+
+## 2026-09-10
+
+- Updated `svdo-meter eval run` judge handling so Codex and Claude judge checks can be configured with `--harness` and `--model`, and custom judge programs can be configured with `--judge-command`.
+- Fixed scoreless or malformed judge output, including Codex stream output for `cli-design`, to report a failed judge check with captured context instead of aborting the entire eval run.
+- Added eval judge integration coverage for Codex, Claude, custom judge commands, failing judge scores, and invalid judge responses.
+- Updated eval CLI help and documentation for judge harnesses, judge command arguments, request payloads, and expected JSON response fields.
 
 ## 2026-08-28
 
