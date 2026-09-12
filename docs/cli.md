@@ -706,4 +706,4 @@ cargo test --workspace --all-features
 cargo deny check
 ```
 
-Normal tests use fixtures under `tests/fixtures/` and do not require live Codex execution.
+Normal tests use fixtures under `tests/fixtures/` and do not require live Codex execution. Provider conformance fixtures keep raw or synthetic provider JSONL in `.jsonl` files and record capture context in adjacent `.metadata.yaml` sidecars. When refreshing Codex fixtures, update `cli_version` from the capturing CLI, for example `codex --version`, and set `schema_observed` to the date the provider output shape was observed.

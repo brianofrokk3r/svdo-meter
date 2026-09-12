@@ -550,6 +550,7 @@ threshold: 1.0
         &bin_dir,
         "curl",
         r#"#!/bin/sh
+cat >/dev/null
 printf 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n'
 printf '{"model":"fixture-litellm-model","choices":[{"message":{"content":"I checked this but did not return JSON."}}],"usage":{"prompt_tokens":3,"completion_tokens":2}}'
 "#,
@@ -697,6 +698,7 @@ fn repo_sample_evals_are_runnable() {
     let output = run_svdo_meter(&[
         "eval",
         "run",
+        "cli-entrypoint",
         "--workspace",
         path_str(&repo_root).expect("repo root path must be UTF-8"),
         "--format",
@@ -704,8 +706,8 @@ fn repo_sample_evals_are_runnable() {
     ]);
 
     assert!(output.status.success());
-    assert_stdout_contains(&output, "\"id\": \"rust-cli-smoke\"");
-    assert_stdout_contains(&output, "\"id\": \"fixture-integrity\"");
+    assert_stdout_contains(&output, "\"id\": \"cli-entrypoint\"");
+    assert_stdout_contains(&output, "\"id\": \"main-entrypoint\"");
     assert_stdout_contains(&output, "\"harness\": \"judge-unavailable\"");
 }
 
@@ -885,9 +887,11 @@ fn assert_success_contains(args: &[&str], expected: &str) {
 
 fn assert_stdout_contains(output: &Output, expected: &str) {
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stdout.contains(expected),
-        "stdout did not contain `{expected}`:\n{stdout}"
+        "stdout did not contain `{expected}`:\nstatus: {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        output.status
     );
 }
 
