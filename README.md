@@ -405,6 +405,21 @@ The local JSONL sink is enabled by default and remains active when `svdo-meter r
 
 Raw provider payloads are not persisted by default. This avoids storing prompts, model responses, command output, tool results, environment variables, secrets, and other sensitive content unless raw retention is explicitly enabled in code/configuration.
 
+## Conformance Fixtures
+
+Provider conformance fixtures live under `tests/fixtures/<provider>/`. Keep the `.jsonl` files as captured or synthetic provider event streams, and record capture context in the matching `.metadata.yaml` sidecar when a fixture is used for provider conformance.
+
+Codex fixture metadata is required to include:
+
+```yaml
+provider: codex
+cli_version: 0.154.0
+schema_observed: 2026-09-11
+model: gpt-5
+```
+
+When refreshing fixtures, set `cli_version` from the provider CLI used for capture, for example `codex --version`, and update `schema_observed` to the date the output shape was observed. The conformance tests validate required metadata before replaying fixtures and do not launch live provider CLIs.
+
 Inspect local telemetry without modifying `.svdo/meter/`:
 
 ```bash

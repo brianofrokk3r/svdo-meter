@@ -7,12 +7,14 @@
 //! provider CLI; they exercise only normalization into the canonical
 //! `meter_core::MeterEvent` schema.
 
+use chrono::NaiveDate;
 use meter_adapters::{ClaudeEventNormalizer, CodexEventNormalizer, OpenCodeEventNormalizer};
 use meter_core::{
     EventContext, HarnessKind, MeterEvent, ModelName, RawEventRetention, RunId, RunMetrics,
     SessionId, TicketId, TokenUsage,
 };
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 #[test]
@@ -36,12 +38,34 @@ fn opencode_fixtures_conform_to_canonical_events() {
     }
 }
 
+fn fixture_metadata_parser_requires_all_fields() {
+    let error = parse_fixture_metadata(
+        "provider: codex\ncli_version: 0.154.0\nschema_observed: 2026-09-11\n",
+        "tests/fixtures/codex/example.metadata.yaml",
+    )
+    .expect_err("missing model should fail");
+
+    assert!(
+        error.contains("missing required metadata key `model`"),
+        "unexpected metadata validation error: {error}"
+    );
+}
+
+#[test]
+fn fixture_metadata_cli_version_must_look_like_a_version() {
+    assert!(is_semver_like("0.154.0"));
+    assert!(!is_semver_like("captured-current"));
+    assert!(!is_semver_like("codex-cli 0.154.0"));
+}
+
 #[derive(Debug)]
 struct ConformanceCase {
     provider: &'static str,
     version: &'static str,
     fixture_path: &'static str,
     fixture: &'static str,
+    metadata_path: Option<&'static str>,
+    metadata: Option<&'static str>,
     harness: HarnessKind,
     expected_events: Vec<ExpectedEvent>,
     expected_metrics: RunMetrics,
@@ -75,7 +99,16 @@ struct NormalizedFixture {
     failure_reason: Option<String>,
 }
 
+#[derive(Debug, PartialEq)]
+struct FixtureMetadata {
+    provider: String,
+    cli_version: String,
+    schema_observed: String,
+    model: String,
+}
+
 fn assert_case(case: ConformanceCase) {
+    assert_fixture_metadata(&case);
     let actual = normalize_fixture(&case);
     let actual_events: Vec<_> = actual.events.iter().map(summarize_event).collect();
     let expected_events: Vec<_> = case
@@ -128,6 +161,109 @@ fn assert_case(case: ConformanceCase) {
         case.expected_failure_reason,
         "{id}: failure_reason mismatch"
     );
+}
+
+fn assert_fixture_metadata(case: &ConformanceCase) {
+    let id = case_id(case);
+    if case.provider != "codex" && case.metadata.is_none() {
+        return;
+    }
+
+    let metadata_path = case
+        .metadata_path
+        .unwrap_or_else(|| panic!("{id}: missing fixture metadata path"));
+    let metadata = case
+        .metadata
+        .unwrap_or_else(|| panic!("{id}: missing fixture metadata at {metadata_path}"));
+    let metadata = parse_fixture_metadata(metadata, metadata_path)
+        .unwrap_or_else(|error| panic!("{id}: {error}"));
+
+    assert_eq!(
+        metadata.provider, case.provider,
+        "{id}: metadata provider must match conformance provider"
+    );
+    assert!(
+        is_semver_like(&metadata.cli_version),
+        "{id}: metadata cli_version must be a provider CLI version such as 0.154.0"
+    );
+    assert!(
+        NaiveDate::parse_from_str(&metadata.schema_observed, "%Y-%m-%d").is_ok(),
+        "{id}: metadata schema_observed must use YYYY-MM-DD"
+    );
+    assert!(
+        !metadata.model.trim().is_empty(),
+        "{id}: metadata model must not be empty"
+    );
+}
+
+fn parse_fixture_metadata(metadata: &str, metadata_path: &str) -> Result<FixtureMetadata, String> {
+    let mut values = BTreeMap::new();
+    for (index, line) in metadata.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (key, value) = line.split_once(':').ok_or_else(|| {
+            format!(
+                "{metadata_path}:{}: expected `key: value` metadata",
+                index + 1
+            )
+        })?;
+        let key = key.trim();
+        let value = value.trim();
+        if key.is_empty() || value.is_empty() {
+            return Err(format!(
+                "{metadata_path}:{}: metadata keys and values must not be empty",
+                index + 1
+            ));
+        }
+        if values.insert(key.to_owned(), value.to_owned()).is_some() {
+            return Err(format!(
+                "{metadata_path}:{}: duplicate metadata key `{key}`",
+                index + 1
+            ));
+        }
+    }
+
+    Ok(FixtureMetadata {
+        provider: required_metadata_value(&values, metadata_path, "provider")?,
+        cli_version: required_metadata_value(&values, metadata_path, "cli_version")?,
+        schema_observed: required_metadata_value(&values, metadata_path, "schema_observed")?,
+        model: required_metadata_value(&values, metadata_path, "model")?,
+    })
+}
+
+fn required_metadata_value(
+    values: &BTreeMap<String, String>,
+    metadata_path: &str,
+    key: &str,
+) -> Result<String, String> {
+    values
+        .get(key)
+        .cloned()
+        .ok_or_else(|| format!("{metadata_path}: missing required metadata key `{key}`"))
+}
+
+fn is_semver_like(value: &str) -> bool {
+    let mut parts = value.split('.');
+    let Some(major) = parts.next() else {
+        return false;
+    };
+    let Some(minor) = parts.next() else {
+        return false;
+    };
+    let Some(patch) = parts.next() else {
+        return false;
+    };
+    if parts.next().is_some() {
+        return false;
+    }
+    !major.is_empty()
+        && !minor.is_empty()
+        && !patch.is_empty()
+        && major.chars().all(|ch| ch.is_ascii_digit())
+        && minor.chars().all(|ch| ch.is_ascii_digit())
+        && patch.chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn normalize_fixture(case: &ConformanceCase) -> NormalizedFixture {
@@ -254,6 +390,10 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "gpt-5/captured-current",
             fixture_path: "tests/fixtures/codex/successful_run.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/successful_run.jsonl"),
+            metadata_path: Some("tests/fixtures/codex/successful_run.metadata.yaml"),
+            metadata: Some(include_str!(
+                "../../../tests/fixtures/codex/successful_run.metadata.yaml"
+            )),
             harness: HarnessKind::Codex,
             expected_events: vec![
                 event(
@@ -357,6 +497,10 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/failed_run.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/failed_run.jsonl"),
+            metadata_path: Some("tests/fixtures/codex/failed_run.metadata.yaml"),
+            metadata: Some(include_str!(
+                "../../../tests/fixtures/codex/failed_run.metadata.yaml"
+            )),
             harness: HarnessKind::Codex,
             expected_events: vec![
                 event(
@@ -406,6 +550,10 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/resumed_session.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/resumed_session.jsonl"),
+            metadata_path: Some("tests/fixtures/codex/resumed_session.metadata.yaml"),
+            metadata: Some(include_str!(
+                "../../../tests/fixtures/codex/resumed_session.metadata.yaml"
+            )),
             harness: HarnessKind::Codex,
             expected_events: vec![
                 event(
@@ -443,6 +591,10 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/interrupted_run.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/interrupted_run.jsonl"),
+            metadata_path: Some("tests/fixtures/codex/interrupted_run.metadata.yaml"),
+            metadata: Some(include_str!(
+                "../../../tests/fixtures/codex/interrupted_run.metadata.yaml"
+            )),
             harness: HarnessKind::Codex,
             expected_events: vec![event(
                 "session.discovered",
@@ -464,6 +616,10 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/malformed_event.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/malformed_event.jsonl"),
+            metadata_path: Some("tests/fixtures/codex/malformed_event.metadata.yaml"),
+            metadata: Some(include_str!(
+                "../../../tests/fixtures/codex/malformed_event.metadata.yaml"
+            )),
             harness: HarnessKind::Codex,
             expected_events: vec![event(
                 "session.discovered",
@@ -485,6 +641,10 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/missing_token_usage.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/missing_token_usage.jsonl"),
+            metadata_path: Some("tests/fixtures/codex/missing_token_usage.metadata.yaml"),
+            metadata: Some(include_str!(
+                "../../../tests/fixtures/codex/missing_token_usage.metadata.yaml"
+            )),
             harness: HarnessKind::Codex,
             expected_events: Vec::new(),
             expected_metrics: RunMetrics {
@@ -502,6 +662,10 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/unknown_event.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/unknown_event.jsonl"),
+            metadata_path: Some("tests/fixtures/codex/unknown_event.metadata.yaml"),
+            metadata: Some(include_str!(
+                "../../../tests/fixtures/codex/unknown_event.metadata.yaml"
+            )),
             harness: HarnessKind::Codex,
             expected_events: Vec::new(),
             expected_metrics: RunMetrics {
@@ -522,6 +686,8 @@ fn claude_cases() -> Vec<ConformanceCase> {
             version: "claude-sonnet-5/captured-current",
             fixture_path: "tests/fixtures/claude/successful_run.jsonl",
             fixture: include_str!("../../../tests/fixtures/claude/successful_run.jsonl"),
+            metadata_path: None,
+            metadata: None,
             harness: HarnessKind::Claude,
             expected_events: vec![
                 event(
@@ -592,6 +758,8 @@ fn claude_cases() -> Vec<ConformanceCase> {
             version: "claude-sonnet-5/captured-current",
             fixture_path: "tests/fixtures/claude/failed_run.jsonl",
             fixture: include_str!("../../../tests/fixtures/claude/failed_run.jsonl"),
+            metadata_path: None,
+            metadata: None,
             harness: HarnessKind::Claude,
             expected_events: vec![event(
                 "session.discovered",
@@ -614,6 +782,8 @@ fn claude_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/claude/unknown_event.jsonl",
             fixture: include_str!("../../../tests/fixtures/claude/unknown_event.jsonl"),
+            metadata_path: None,
+            metadata: None,
             harness: HarnessKind::Claude,
             expected_events: Vec::new(),
             expected_metrics: RunMetrics {
