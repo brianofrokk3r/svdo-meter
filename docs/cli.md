@@ -87,6 +87,8 @@ Tokens
   Total   194,213
 ```
 
+For recommended repository rollout patterns, including pre-commit, CI, and before-and-after alignment workflows, see [Applying SVDO Meter](adoption.md).
+
 ## `svdo-meter run`
 
 Starts or resumes measured agent CLI work and appends canonical telemetry locally.
