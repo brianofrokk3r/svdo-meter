@@ -153,14 +153,14 @@ Common options:
 | Argument | Required | Description |
 |---|---:|---|
 | `--ticket <TICKET>` | Yes | External ticket/work identifier. SVDO Meter records this as the join key for future reports or enrichment. |
-| `--harness <HARNESS>` | Yes | Agent harness. Supported values: `codex`, `claude`, `gemini`, `litellm`. |
+| `--harness <HARNESS>` | Yes | Agent harness. Supported values: `codex`, `claude`, `opencode`, `gemini`. |
 | `<PROMPT>` | Yes, unless `--prompt-file` is used | Inline prompt or work instruction forwarded to the harness. Prompts are not persisted by default. |
 | `--prompt-file <PATH>` | Yes, unless `<PROMPT>` is used | UTF-8 text file whose contents are forwarded to the harness as the prompt. Cannot be combined with an inline prompt. |
 | `--label <LABEL>` | No | Human-readable label copied to canonical run events. |
 | `--workspace <PATH>` | No | Workspace directory passed to the harness and used as the base for `.svdo/meter/`. |
 | `--session <SESSION_ID>` | No | Explicit provider session/thread override for this run. |
 | `--model <MODEL>` | No | Harness-specific model configuration passed to the selected harness. |
-| `--dangerous-bypass` | No | Asks the selected harness to bypass approval and sandbox protections. Maps to Codex yolo behavior or Claude Code `bypassPermissions`. |
+| `--dangerous-bypass` | No | Asks the selected harness to bypass approval and sandbox protections. Maps to Codex yolo behavior, Claude Code `bypassPermissions`, or OpenCode `--auto`. |
 | `--sink <SINK>` | No | Event output sink. Repeatable. Supported values: `jsonl`, `stdout`. Durable `jsonl` telemetry remains enabled by default. |
 | `--emit <FORMAT>` | No | Convenience event stream format. Supported value: `ndjson`, equivalent to enabling the stdout sink. |
 
@@ -174,27 +174,41 @@ Codex-specific options, valid only with `--harness codex`:
 | `--codex-yolo` | Compatibility spelling for Codex's dangerous `--dangerously-bypass-approvals-and-sandbox` flag. Also records canonical `dangerous-bypass` execution permission telemetry. |
 | `--codex-config <key=value>` | Passes a repeated `--config <key=value>` override to Codex. Keys and values must be non-empty. |
 
+OpenCode-specific options, valid only with `--harness opencode`:
+
+| Argument | Description |
+|---|---|
+| `--opencode-agent <AGENT>` | Passes `--agent <AGENT>` to OpenCode. |
+
 SVDO Meter reads `--prompt-file` before starting the harness. Missing, unreadable, or non-UTF-8 files fail fast with a path-aware CLI error.
 
-### LiteLLM Harness
+### OpenCode Harness
 
-LiteLLM runs call the LiteLLM-compatible API directly. They do not invoke a local LiteLLM CLI or start a local proxy process.
-
-Set `LITELLM_API_KEY` in the process environment before selecting `--harness litellm`:
+OpenCode runs invoke local non-interactive `opencode run` with JSON output requested:
 
 ```bash
-export LITELLM_API_KEY
-
 svdo-meter run \
   --ticket ENG-142 \
   --label "Add password reset flow" \
-  --harness litellm \
-  --model gpt-5 \
+  --harness opencode \
+  --model github-copilot/gpt-5 \
+  --opencode-agent build \
   --workspace ~/code/app \
   "Implement the password reset flow described in ENG-142"
 ```
 
-When targeting a LiteLLM-compatible API base other than the default, set `LITELLM_API_BASE` in the environment. Do not pass API keys in prompts, command arguments, fixtures, or telemetry examples.
+Conceptual invocation:
+
+```bash
+opencode run --format json --dir ~/code/app --model github-copilot/gpt-5 --agent build "Implement the password reset flow described in ENG-142"
+```
+
+SVDO Meter passes `--model` through unchanged, maps `--opencode-agent` to OpenCode `--agent`, and maps `--dangerous-bypass` to OpenCode `--auto`.
+When a session is selected explicitly or resolved from durable telemetry, SVDO Meter passes it to OpenCode with `--session <SESSION>`:
+
+```bash
+opencode run --format json --dir ~/code/app --session ses_abc123 "Continue this fix"
+```
 
 ### Event Output Sinks
 
@@ -262,10 +276,7 @@ Run judge checks with an LLM judge:
 svdo-meter eval run --harness codex --model gpt-5
 svdo-meter eval run api-contract --harness codex --model gpt-5
 svdo-meter eval run --harness claude --model sonnet
-svdo-meter eval run --harness litellm --model gpt-5
 ```
-
-LiteLLM judge runs use the same direct LiteLLM-compatible API access as `svdo-meter run`. Set `LITELLM_API_KEY` in the process environment before selecting `--harness litellm`; svdo-meter does not read LiteLLM credentials from persisted configuration.
 
 ### Arguments
 
@@ -273,7 +284,7 @@ LiteLLM judge runs use the same direct LiteLLM-compatible API access as `svdo-me
 |---|---:|---|
 | `<EVAL>` | No | Eval id, file stem, or file name. When omitted, all `.yaml` and `.yml` eval definitions under `.svdo/evals/` run. |
 | `--workspace <PATH>` | No | Repository workspace containing `.svdo/evals/`. Defaults to the current directory. |
-| `--harness <HARNESS>` | No | Harness used for `type: judge` checks. Supported values: `codex`, `claude`, `gemini`, `litellm`. |
+| `--harness <HARNESS>` | No | Harness used for `type: judge` checks. Supported values: `codex`, `claude`, `gemini`. |
 | `--model <MODEL>` | No | Model passed to the judge harness, such as `gpt-5`. Requires `--harness`. |
 | `--judge-command <PROGRAM>` | No | Custom program used for `type: judge` checks. Receives the judge request JSON path as its final argument. |
 | `--judge-arg <ARG>` | No | Extra argument passed to `--judge-command` before the judge request path. Repeat for multiple arguments. |
@@ -332,7 +343,7 @@ Command checks report success or failure, exit status, duration, and captured fa
 
 Judge checks are represented in the schema and result model. Without `--harness` or `--judge-command`, judge checks resolve their referenced standards and report a skipped result with a clear reason. Skipped judge checks do not block deterministic command checks from running.
 
-When `--harness codex` is set, each judge check sends the eval task and resolved standard contents to `codex exec --json`, asks the model to return only a JSON score, and reads the JSON score from the Codex output stream. When `--harness claude` is set, the same judge request is sent through `claude -p` with `--output-format stream-json`. When `--harness litellm` is set, the judge request is sent directly to the LiteLLM-compatible API using `LITELLM_API_KEY`.
+When `--harness codex` is set, each judge check sends the eval task and resolved standard contents to `codex exec --json`, asks the model to return only a JSON score, and reads the JSON score from the Codex output stream. When `--harness claude` is set, the same judge request is sent through `claude -p` with `--output-format stream-json`.
 
 `--judge-command` remains available for custom judge integrations. Each judge check writes a temporary request JSON file and invokes the configured program directly:
 
@@ -593,7 +604,7 @@ Every line is a complete JSON object. The common envelope is intended to be prac
 | `run_id` | SVDO Meter run identifier shared by events from one measured run. |
 | `ticket_id` | Required work identifier supplied with `--ticket`; reports group by this value. |
 | `label` | Optional human-readable label copied from `--label`. |
-| `harness` | Harness name, currently `codex` or `claude`. |
+| `harness` | Harness name, currently `codex`, `claude`, or `opencode`. |
 | `requested_model` | Optional model requested through the CLI. |
 | `resolved_model` | Optional provider-resolved model name when the harness reports one. |
 | `session_id` | Optional provider session/thread id. |
@@ -657,7 +668,7 @@ Unknown provider events are tolerated and do not fail the run. Raw provider payl
 | `run.completed` | Final metrics and optional process exit code. |
 | `run.failed` | Final metrics, failure reason, and optional process exit code. |
 
-Consumers should prefer the canonical fields above and tolerate missing optional fields. The exact provider-specific source event names inside `harness.event` are adapter details and may vary as Codex or Claude Code change their streams.
+Consumers should prefer the canonical fields above and tolerate missing optional fields. The exact provider-specific source event names inside `harness.event` are adapter details and may vary as Codex, Claude Code, or OpenCode change their streams.
 
 ## Metrics
 

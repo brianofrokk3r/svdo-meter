@@ -8,7 +8,7 @@
 //! `meter_core::MeterEvent` schema.
 
 use chrono::NaiveDate;
-use meter_adapters::{ClaudeEventNormalizer, CodexEventNormalizer};
+use meter_adapters::{ClaudeEventNormalizer, CodexEventNormalizer, OpenCodeEventNormalizer};
 use meter_core::{
     EventContext, HarnessKind, MeterEvent, ModelName, RawEventRetention, RunId, RunMetrics,
     SessionId, TicketId, TokenUsage,
@@ -27,6 +27,13 @@ fn codex_fixtures_conform_to_canonical_events() {
 #[test]
 fn claude_fixtures_conform_to_canonical_events() {
     for case in claude_cases() {
+        assert_case(case);
+    }
+}
+
+#[test]
+fn opencode_fixtures_conform_to_canonical_events() {
+    for case in opencode_cases() {
         assert_case(case);
     }
 }
@@ -290,6 +297,21 @@ fn normalize_fixture(case: &ConformanceCase) -> NormalizedFixture {
                 session_id: normalizer.session_id,
                 resolved_model: normalizer.resolved_model,
                 failure_reason: normalizer.failure_reason,
+            }
+        }
+        HarnessKind::OpenCode => {
+            let mut normalizer =
+                OpenCodeEventNormalizer::new(context(case.harness), RawEventRetention::Disabled);
+            let mut events = Vec::new();
+            for line in case.fixture.lines() {
+                events.extend(normalizer.normalize_line(line).events);
+            }
+            NormalizedFixture {
+                events,
+                metrics: normalizer.metrics,
+                session_id: normalizer.session_id,
+                resolved_model: normalizer.resolved_model,
+                failure_reason: None,
             }
         }
         unsupported => panic!(
@@ -770,6 +792,120 @@ fn claude_cases() -> Vec<ConformanceCase> {
                 ..RunMetrics::default()
             },
             expected_session_id: None,
+            expected_resolved_model: None,
+            expected_failure_reason: None,
+        },
+    ]
+}
+
+fn opencode_cases() -> Vec<ConformanceCase> {
+    vec![
+        ConformanceCase {
+            provider: "opencode",
+            version: "captured-current",
+            fixture_path: "tests/fixtures/opencode/successful_run.jsonl",
+            fixture: include_str!("../../../tests/fixtures/opencode/successful_run.jsonl"),
+            metadata_path: None,
+            metadata: None,
+            harness: HarnessKind::OpenCode,
+            expected_events: vec![
+                event(
+                    "session.discovered",
+                    Some("ses_494719016ffe85dkDMj0FPRbHK"),
+                    Some("github-copilot/gpt-5"),
+                    payload("session_discovered", json!({ "source": "opencode" })),
+                ),
+                event(
+                    "tool.completed",
+                    Some("ses_494719016ffe85dkDMj0FPRbHK"),
+                    Some("github-copilot/gpt-5"),
+                    payload(
+                        "tool_completed",
+                        json!({
+                            "tool_id": "prt_tool",
+                            "tool_name": "bash",
+                            "success": true,
+                            "duration_ms": 400
+                        }),
+                    ),
+                ),
+                event(
+                    "usage.reported",
+                    Some("ses_494719016ffe85dkDMj0FPRbHK"),
+                    Some("github-copilot/gpt-5"),
+                    payload(
+                        "usage_reported",
+                        json!({
+                            "input_tokens": 100,
+                            "cached_input_tokens": 20,
+                            "cache_write_tokens": 2,
+                            "output_tokens": 25,
+                            "reasoning_tokens": 5
+                        }),
+                    ),
+                ),
+            ],
+            expected_metrics: RunMetrics {
+                provider_event_count: 3,
+                tool_calls: 1,
+                tool_time_ms: 400,
+                turn_count: 1,
+                active_time_ms: 662,
+                token_usage: TokenUsage {
+                    input_tokens: Some(100),
+                    cached_input_tokens: Some(20),
+                    cache_write_tokens: Some(2),
+                    output_tokens: Some(25),
+                    reasoning_tokens: Some(5),
+                },
+                ..RunMetrics::default()
+            },
+            expected_session_id: Some("ses_494719016ffe85dkDMj0FPRbHK"),
+            expected_resolved_model: Some("github-copilot/gpt-5"),
+            expected_failure_reason: None,
+        },
+        ConformanceCase {
+            provider: "opencode",
+            version: "captured-current",
+            fixture_path: "tests/fixtures/opencode/unknown_event.jsonl",
+            fixture: include_str!("../../../tests/fixtures/opencode/unknown_event.jsonl"),
+            metadata_path: None,
+            metadata: None,
+            harness: HarnessKind::OpenCode,
+            expected_events: vec![event(
+                "session.discovered",
+                Some("ses_future"),
+                None,
+                payload("session_discovered", json!({ "source": "opencode" })),
+            )],
+            expected_metrics: RunMetrics {
+                provider_event_count: 1,
+                ..RunMetrics::default()
+            },
+            expected_session_id: Some("ses_future"),
+            expected_resolved_model: None,
+            expected_failure_reason: None,
+        },
+        ConformanceCase {
+            provider: "opencode",
+            version: "captured-current",
+            fixture_path: "tests/fixtures/opencode/malformed_event.jsonl",
+            fixture: include_str!("../../../tests/fixtures/opencode/malformed_event.jsonl"),
+            metadata_path: None,
+            metadata: None,
+            harness: HarnessKind::OpenCode,
+            expected_events: vec![event(
+                "session.discovered",
+                Some("ses_ok"),
+                None,
+                payload("session_discovered", json!({ "source": "opencode" })),
+            )],
+            expected_metrics: RunMetrics {
+                provider_event_count: 1,
+                errors: 1,
+                ..RunMetrics::default()
+            },
+            expected_session_id: Some("ses_ok"),
             expected_resolved_model: None,
             expected_failure_reason: None,
         },

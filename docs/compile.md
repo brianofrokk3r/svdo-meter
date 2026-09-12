@@ -33,7 +33,13 @@ claude --help
 claude auth status
 ```
 
-Fixture tests and normal compilation do not require live Codex or Claude Code execution.
+For real measured OpenCode runs, install and authenticate OpenCode separately and ensure `opencode` is on `PATH`:
+
+```bash
+opencode --help
+```
+
+Fixture tests and normal compilation do not require live Codex, Claude Code, or OpenCode execution.
 
 ## Build Debug Binary
 
@@ -94,6 +100,18 @@ cargo run -p svdo-meter -- run \
   --model sonnet \
   --workspace . \
   --claude-max-turns 3 \
+  "Implement ENG-142"
+```
+
+Example OpenCode measured run:
+
+```bash
+cargo run -p svdo-meter -- run \
+  --ticket ENG-142 \
+  --harness opencode \
+  --model github-copilot/gpt-5 \
+  --opencode-agent build \
+  --workspace . \
   "Implement ENG-142"
 ```
 
@@ -170,6 +188,8 @@ If `svdo-meter` is not found after `cargo install`, add Cargo's bin directory to
 If `svdo-meter run --harness codex ...` fails to start Codex, confirm the Codex CLI is installed, authenticated, and available as `codex` on `PATH`.
 
 If `svdo-meter run --harness claude ...` fails to start Claude Code, confirm the Claude Code CLI is installed, authenticated, and available as `claude` on `PATH`. SVDO Meter runs Claude Code in print mode with `--output-format stream-json --verbose`; unsupported combinations such as conflicting resume/session flags fail before launch.
+
+If `svdo-meter run --harness opencode ...` fails to start OpenCode, confirm the OpenCode CLI is installed, authenticated, and available as `opencode` on `PATH`. SVDO Meter runs OpenCode with `opencode run --format json`.
 
 Telemetry is written under the selected workspace:
 

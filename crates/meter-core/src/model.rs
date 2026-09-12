@@ -32,8 +32,9 @@ pub struct RunContext {
 pub enum HarnessKind {
     Codex,
     Claude,
+    #[serde(rename = "opencode")]
+    OpenCode,
     Gemini,
-    Litellm,
 }
 
 impl HarnessKind {
@@ -41,8 +42,8 @@ impl HarnessKind {
         match self {
             Self::Codex => "codex",
             Self::Claude => "claude",
+            Self::OpenCode => "opencode",
             Self::Gemini => "gemini",
-            Self::Litellm => "litellm",
         }
     }
 }
@@ -87,8 +88,8 @@ impl FromStr for HarnessKind {
         match value {
             "codex" => Ok(Self::Codex),
             "claude" => Ok(Self::Claude),
+            "opencode" => Ok(Self::OpenCode),
             "gemini" => Ok(Self::Gemini),
-            "litellm" => Ok(Self::Litellm),
             other => Err(HarnessParseError(other.to_owned())),
         }
     }
@@ -105,8 +106,8 @@ pub enum RawEventRetention {
 pub enum HarnessConfig {
     Codex(CodexConfig),
     Claude(ClaudeConfig),
+    OpenCode(OpenCodeConfig),
     Gemini(GeminiConfig),
-    Litellm(LitellmConfig),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -226,6 +227,27 @@ impl Default for ClaudeConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenCodeConfig {
+    pub binary: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<ModelName>,
+    pub raw_event_retention: RawEventRetention,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+}
+
+impl Default for OpenCodeConfig {
+    fn default() -> Self {
+        Self {
+            binary: PathBuf::from("opencode"),
+            model: None,
+            raw_event_retention: RawEventRetention::Disabled,
+            agent: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaudeRunOptions {
     pub continue_latest: bool,
@@ -263,12 +285,6 @@ pub struct GeminiConfig {
     pub model: Option<ModelName>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LitellmConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<ModelName>,
-}
-
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
@@ -276,12 +292,21 @@ mod tests {
     use super::HarnessKind;
 
     #[test]
-    fn parses_litellm_harness_kind() {
+    fn parses_opencode_harness_kind() {
         assert_eq!(
-            HarnessKind::from_str("litellm").unwrap_or_else(|err| panic!("{err}")),
-            HarnessKind::Litellm
+            HarnessKind::from_str("opencode").unwrap_or_else(|err| panic!("{err}")),
+            HarnessKind::OpenCode
         );
-        assert_eq!(HarnessKind::Litellm.as_str(), "litellm");
-        assert_eq!(HarnessKind::Litellm.to_string(), "litellm");
+        assert_eq!(HarnessKind::OpenCode.as_str(), "opencode");
+        assert_eq!(HarnessKind::OpenCode.to_string(), "opencode");
+        assert_eq!(
+            serde_json::to_string(&HarnessKind::OpenCode).unwrap_or_else(|err| panic!("{err}")),
+            "\"opencode\""
+        );
+    }
+
+    #[test]
+    fn rejects_litellm_harness_kind() {
+        assert!(HarnessKind::from_str("litellm").is_err());
     }
 }
