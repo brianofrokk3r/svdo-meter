@@ -27,11 +27,12 @@ fn help_succeeds_for_documented_command_paths() {
         &["run", "--help"],
         "svdo-meter run --ticket ENG-142 --harness codex --dangerous-bypass PROMPT",
     );
-    assert_success_contains(&["run", "--help"], "codex, claude, gemini, litellm");
+    assert_success_contains(&["run", "--help"], "codex, claude, opencode, gemini");
     assert_success_contains(
-        &["eval", "run", "--help"],
-        "svdo-meter eval run --harness litellm --model gpt-5",
+        &["run", "--help"],
+        "svdo-meter run --ticket ENG-142 --harness opencode --model github-copilot/gpt-5 --opencode-agent build PROMPT",
     );
+    assert_success_contains(&["eval", "run", "--help"], "codex, claude, gemini");
 }
 
 #[test]
@@ -377,223 +378,6 @@ printf '{"type":"assistant","message":{"model":"sonnet","content":[{"type":"text
 }
 
 #[test]
-fn eval_litellm_judge_harness_scores_judge_checks_without_live_api() -> std::io::Result<()> {
-    let workspace = unique_temp_path("svdo-meter-eval-litellm-judge-integration");
-    write_eval_definition(
-        &workspace,
-        "litellm-judge.yaml",
-        r#"
-id: litellm-judge
-task: Review architecture.
-checks:
-  - id: architecture
-    type: judge
-    standard: architecture
-    required: true
-    weight: 1.0
-threshold: 1.0
-"#,
-    )?;
-    write_standard(
-        &workspace,
-        "architecture.md",
-        "Prefer direct API-backed harnesses.",
-    )?;
-    let bin_dir = workspace.join("bin");
-    let curl = write_executable(
-        &bin_dir,
-        "curl",
-        r#"#!/bin/sh
-capture="${LITELLM_FIXTURE_CAPTURE:?missing capture path}"
-body_path=""
-previous=""
-for arg in "$@"; do
-  if [ "$previous" = "--data-binary" ]; then
-    body_path="${arg#@}"
-  fi
-  previous="$arg"
-done
-cat > "$capture.stdin"
-cp "$body_path" "$capture.body"
-grep 'Authorization: Bearer fixture-litellm-key' "$capture.stdin" >/dev/null || exit 12
-grep '"model":"fixture-litellm-model"' "$capture.body" >/dev/null || exit 13
-grep 'Return only one JSON object' "$capture.body" >/dev/null || exit 14
-printf 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n'
-printf '{"model":"fixture-litellm-model","choices":[{"message":{"content":"{\"score\":1.0,\"passed\":true,\"violations\":[]}"}}],"usage":{"prompt_tokens":13,"completion_tokens":8}}'
-"#,
-    )?;
-    let capture = workspace.join("litellm-capture");
-
-    let output = run_svdo_meter_with_path_and_env(
-        &[
-            "eval",
-            "run",
-            "litellm-judge",
-            "--workspace",
-            path_str(&workspace)?,
-            "--harness",
-            "litellm",
-            "--model",
-            "fixture-litellm-model",
-            "--format",
-            "json",
-        ],
-        curl.parent()
-            .ok_or_else(|| std::io::Error::other("missing bin dir"))?,
-        &[
-            ("LITELLM_API_KEY", "fixture-litellm-key"),
-            ("LITELLM_API_BASE", "https://fixture.litellm.local"),
-            ("LITELLM_FIXTURE_CAPTURE", path_str(&capture)?),
-        ],
-    );
-
-    assert!(output.status.success());
-    assert_stdout_contains(&output, "\"outcome\": \"passed\"");
-    assert_stdout_contains(&output, "\"model\": \"fixture-litellm-model\"");
-    assert_stdout_contains(&output, "\"harness\": \"litellm\"");
-    assert_stdout_contains(&output, "\"input\": 13");
-    assert_stdout_contains(&output, "\"output\": 8");
-    assert_output_not_contains(&output, "fixture-litellm-key");
-    let headers = fs::read_to_string(workspace.join("litellm-capture.stdin"))?;
-    let body = fs::read_to_string(workspace.join("litellm-capture.body"))?;
-    assert!(headers.contains("Authorization: Bearer fixture-litellm-key"));
-    assert!(body.contains("\"model\":\"fixture-litellm-model\""));
-    assert!(body.contains("Return only one JSON object"));
-    fs::remove_dir_all(workspace)?;
-    Ok(())
-}
-
-#[test]
-fn eval_litellm_without_api_key_reports_actionable_error() -> std::io::Result<()> {
-    let workspace = unique_temp_path("svdo-meter-eval-litellm-missing-key-integration");
-    write_eval_definition(
-        &workspace,
-        "litellm-missing-key.yaml",
-        r#"
-id: litellm-missing-key
-task: Review architecture.
-checks:
-  - id: architecture
-    type: judge
-    standard: architecture
-    required: true
-    weight: 1.0
-threshold: 1.0
-"#,
-    )?;
-    write_standard(
-        &workspace,
-        "architecture.md",
-        "Prefer direct API-backed harnesses.",
-    )?;
-    let bin_dir = workspace.join("bin");
-    let marker = workspace.join("curl-was-called");
-    let curl = write_executable(
-        &bin_dir,
-        "curl",
-        r#"#!/bin/sh
-touch "${LITELLM_SHOULD_NOT_BE_CALLED:?missing marker path}"
-exit 42
-"#,
-    )?;
-
-    let output = run_svdo_meter_with_path_without_litellm_key(
-        &[
-            "eval",
-            "run",
-            "litellm-missing-key",
-            "--workspace",
-            path_str(&workspace)?,
-            "--harness",
-            "litellm",
-            "--model",
-            "fixture-litellm-model",
-        ],
-        curl.parent()
-            .ok_or_else(|| std::io::Error::other("missing bin dir"))?,
-        &[("LITELLM_SHOULD_NOT_BE_CALLED", path_str(&marker)?)],
-    );
-
-    assert!(!output.status.success());
-    assert_output_contains(&output, "LITELLM_API_KEY");
-    assert_output_contains(&output, "set LITELLM_API_KEY");
-    assert!(!marker.exists());
-    fs::remove_dir_all(workspace)?;
-    Ok(())
-}
-
-#[test]
-fn eval_litellm_invalid_judge_response_fails_without_leaking_secret() -> std::io::Result<()> {
-    let workspace = unique_temp_path("svdo-meter-eval-litellm-invalid-integration");
-    write_eval_definition(
-        &workspace,
-        "litellm-invalid.yaml",
-        r#"
-id: litellm-invalid
-task: Review CLI design.
-checks:
-  - id: cli-design
-    type: judge
-    standard: cli-design
-    required: true
-    weight: 1.0
-threshold: 1.0
-"#,
-    )?;
-    write_standard(
-        &workspace,
-        "cli-design.md",
-        "Keep command-line output precise and actionable.",
-    )?;
-    let bin_dir = workspace.join("bin");
-    let curl = write_executable(
-        &bin_dir,
-        "curl",
-        r#"#!/bin/sh
-cat >/dev/null
-printf 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n'
-printf '{"model":"fixture-litellm-model","choices":[{"message":{"content":"I checked this but did not return JSON."}}],"usage":{"prompt_tokens":3,"completion_tokens":2}}'
-"#,
-    )?;
-
-    let output = run_svdo_meter_with_path_and_env(
-        &[
-            "eval",
-            "run",
-            "litellm-invalid",
-            "--workspace",
-            path_str(&workspace)?,
-            "--harness",
-            "litellm",
-            "--model",
-            "fixture-litellm-model",
-            "--format",
-            "json",
-        ],
-        curl.parent()
-            .ok_or_else(|| std::io::Error::other("missing bin dir"))?,
-        &[
-            ("LITELLM_API_KEY", "fixture-litellm-key"),
-            ("LITELLM_API_BASE", "https://fixture.litellm.local"),
-        ],
-    );
-
-    assert!(!output.status.success());
-    assert_stdout_contains(&output, "\"id\": \"litellm-invalid\"");
-    assert_stdout_contains(&output, "\"id\": \"cli-design\"");
-    assert_stdout_contains(&output, "\"outcome\": \"failed\"");
-    assert_stdout_contains(
-        &output,
-        "invalid judge response for eval `litellm-invalid` check `cli-design`",
-    );
-    assert_stdout_contains(&output, "\"harness\": \"litellm\"");
-    assert_stdout_contains(&output, "\"model\": \"fixture-litellm-model\"");
-    assert_output_not_contains(&output, "fixture-litellm-key");
-    fs::remove_dir_all(workspace)?;
-    Ok(())
-}
-
-#[test]
 fn eval_fails_when_required_judge_rejects_work() -> std::io::Result<()> {
     let workspace = unique_temp_path("svdo-meter-eval-judge-fail-integration");
     write_eval_definition(
@@ -740,30 +524,128 @@ fn codex_flags_fail_with_non_codex_harness_before_harness_execution() {
 }
 
 #[test]
-fn litellm_run_without_api_key_reports_actionable_error() -> std::io::Result<()> {
-    let workspace = unique_temp_path("svdo-meter-litellm-missing-key-integration");
+fn opencode_run_invokes_non_interactive_cli_with_expected_arguments() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-opencode-run-integration");
+    let bin_dir = workspace.join("bin");
+    let capture = workspace.join("opencode-argv.txt");
     fs::create_dir_all(&workspace)?;
+    write_executable(
+        &bin_dir,
+        "opencode",
+        r#"#!/bin/sh
+printf '%s\n' "$@" > "$OPENCODE_CAPTURE"
+printf '{"type":"step_start","sessionID":"ses_opencode_discovered"}\n'
+"#,
+    )?;
 
-    let output = run_svdo_meter_without_litellm_key(&[
-        "run",
-        "--ticket",
-        "ENG-LITELLM",
-        "--harness",
-        "litellm",
-        "--workspace",
-        path_str(&workspace)?,
-        "Implement ENG-LITELLM",
-    ]);
+    let output = run_svdo_meter_with_path_and_env(
+        &[
+            "run",
+            "--ticket",
+            "ENG-OPENCODE",
+            "--harness",
+            "opencode",
+            "--workspace",
+            path_str(&workspace)?,
+            "--model",
+            "github-copilot/gpt-5",
+            "--opencode-agent",
+            "build",
+            "--dangerous-bypass",
+            "Implement ENG-OPENCODE",
+        ],
+        &bin_dir,
+        &[("OPENCODE_CAPTURE", path_str(&capture)?)],
+    );
 
-    assert!(!output.status.success());
-    assert_output_contains(&output, "LITELLM_API_KEY");
-    assert_output_contains(&output, "set LITELLM_API_KEY");
+    assert!(output.status.success());
+    let args = fs::read_to_string(&capture)?;
+    assert_eq!(
+        args.lines().collect::<Vec<_>>(),
+        vec![
+            "run",
+            "--format",
+            "json",
+            "--dir",
+            path_str(&workspace)?,
+            "--model",
+            "github-copilot/gpt-5",
+            "--auto",
+            "--agent",
+            "build",
+            "Implement ENG-OPENCODE",
+        ]
+    );
     let mut telemetry = String::new();
     for entry in fs::read_dir(workspace.join(".svdo").join("meter"))? {
         telemetry.push_str(&fs::read_to_string(entry?.path())?);
     }
-    assert!(telemetry.contains("\"harness\":\"litellm\""));
-    assert!(!telemetry.contains("Authorization"));
+    assert!(telemetry.contains("\"harness\":\"opencode\""));
+    assert!(telemetry.contains("\"session_id\":\"ses_opencode_discovered\""));
+    assert!(telemetry.contains("\"source\":\"opencode\""));
+    assert!(telemetry.contains("\"provider_event_count\":1"));
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn opencode_run_resumes_explicit_session_and_discovers_json_session() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-opencode-session-integration");
+    let bin_dir = workspace.join("bin");
+    let capture = workspace.join("opencode-argv.txt");
+    fs::create_dir_all(&workspace)?;
+    write_executable(
+        &bin_dir,
+        "opencode",
+        r#"#!/bin/sh
+printf '%s\n' "$@" > "$OPENCODE_CAPTURE"
+printf '{"type":"step_start","sessionID":"ses_fixture","model":"github-copilot/gpt-5"}\n'
+"#,
+    )?;
+
+    let output = run_svdo_meter_with_path_and_env(
+        &[
+            "run",
+            "--ticket",
+            "ENG-OPENCODE-SESSION",
+            "--harness",
+            "opencode",
+            "--workspace",
+            path_str(&workspace)?,
+            "--session",
+            "ses_fixture",
+            "--model",
+            "github-copilot/gpt-5",
+            "Continue ENG-OPENCODE-SESSION",
+        ],
+        &bin_dir,
+        &[("OPENCODE_CAPTURE", path_str(&capture)?)],
+    );
+
+    assert!(output.status.success());
+    let args = fs::read_to_string(&capture)?;
+    assert_eq!(
+        args.lines().collect::<Vec<_>>(),
+        vec![
+            "run",
+            "--format",
+            "json",
+            "--dir",
+            path_str(&workspace)?,
+            "--model",
+            "github-copilot/gpt-5",
+            "--session",
+            "ses_fixture",
+            "Continue ENG-OPENCODE-SESSION",
+        ]
+    );
+    let mut telemetry = String::new();
+    for entry in fs::read_dir(workspace.join(".svdo").join("meter"))? {
+        telemetry.push_str(&fs::read_to_string(entry?.path())?);
+    }
+    assert!(telemetry.contains("\"harness\":\"opencode\""));
+    assert!(telemetry.contains("\"session_id\":\"ses_fixture\""));
+    assert!(telemetry.contains("\"source\":\"user_override\""));
     fs::remove_dir_all(workspace)?;
     Ok(())
 }
@@ -904,26 +786,9 @@ fn assert_output_contains(output: &Output, expected: &str) {
     );
 }
 
-fn assert_output_not_contains(output: &Output, unexpected: &str) {
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stdout.contains(unexpected) && !stderr.contains(unexpected),
-        "output contained `{unexpected}`:\nstdout:\n{stdout}\nstderr:\n{stderr}"
-    );
-}
-
 fn run_svdo_meter(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_svdo-meter"))
         .args(args)
-        .output()
-        .unwrap_or_else(|error| panic!("failed to run svdo-meter: {error}"))
-}
-
-fn run_svdo_meter_without_litellm_key(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_svdo-meter"))
-        .args(args)
-        .env_remove("LITELLM_API_KEY")
         .output()
         .unwrap_or_else(|error| panic!("failed to run svdo-meter: {error}"))
 }
@@ -937,28 +802,6 @@ fn run_svdo_meter_with_path(args: &[&str], path_prefix: &Path) -> Output {
     Command::new(env!("CARGO_BIN_EXE_svdo-meter"))
         .args(args)
         .env("PATH", path)
-        .output()
-        .unwrap_or_else(|error| panic!("failed to run svdo-meter: {error}"))
-}
-
-fn run_svdo_meter_with_path_without_litellm_key(
-    args: &[&str],
-    path_prefix: &Path,
-    envs: &[(&str, &str)],
-) -> Output {
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    let path = std::env::join_paths(
-        std::iter::once(path_prefix.to_path_buf()).chain(std::env::split_paths(&path)),
-    )
-    .unwrap_or_else(|error| panic!("failed to build PATH: {error}"));
-    let mut command = Command::new(env!("CARGO_BIN_EXE_svdo-meter"));
-    command.args(args);
-    command.env("PATH", path);
-    command.env_remove("LITELLM_API_KEY");
-    for (key, value) in envs {
-        command.env(key, value);
-    }
-    command
         .output()
         .unwrap_or_else(|error| panic!("failed to run svdo-meter: {error}"))
 }
