@@ -303,6 +303,34 @@ svdo-meter report ENG-142 --pricing-file pricing.json
 
 When telemetry references a model that is not present in the pricing JSON, the report marks that model's cost as unavailable instead of using a default price.
 
+## Apply SVDO Meter To A Repository
+
+SVDO Meter fits best as a lightweight operating layer for AI-assisted repository work:
+
+1. Observe agent work by wrapping meaningful Codex, Claude Code, or LiteLLM sessions with `svdo-meter run`.
+2. Align the repository by defining deterministic checks and optional judge checks under `.svdo/evals/` and `.svdo/standards/`.
+3. Govern stable expectations by running trusted evals in CI and publishing reports or artifacts for review.
+
+A typical workflow is:
+
+```bash
+svdo-meter eval run repo-alignment
+
+svdo-meter run \
+  --ticket ENG-142 \
+  --label "Add password reset flow" \
+  --harness codex \
+  --workspace . \
+  "Implement the password reset flow described in ENG-142"
+
+svdo-meter eval run repo-alignment
+svdo-meter report ENG-142
+```
+
+Use pre-commit hooks only for fast deterministic evals such as formatting, linting, schema checks, or quick unit tests. Run broader deterministic evals in CI on pull requests. Treat LLM judge checks as advisory at first, then make them blocking only after the standards and scoring behavior are stable enough for the team.
+
+For the fuller rollout guide, see [docs/adoption.md](docs/adoption.md).
+
 ## Run Repository Alignment Evals
 
 Repositories can define reusable alignment evals and standards under `.svdo/`:
@@ -380,5 +408,6 @@ The telemetry inspection commands tolerate missing or empty telemetry files, rep
 
 See:
 
+- [docs/adoption.md](docs/adoption.md) for repository rollout patterns, CI usage, pre-commit guidance, and before-and-after alignment workflows
 - [docs/compile.md](docs/compile.md) for build and install instructions
 - [docs/cli.md](docs/cli.md) for command details, telemetry behavior, event types, and development notes
