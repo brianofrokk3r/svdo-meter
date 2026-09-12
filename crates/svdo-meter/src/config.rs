@@ -1,7 +1,7 @@
 use anyhow::{Context, bail};
 use meter_core::{
     ClaudeConfig, CodexApprovalMode, CodexConfig, CodexConfigOverride, ExecutionPermissionMode,
-    HarnessConfig, HarnessKind, ModelName, RawEventRetention,
+    HarnessConfig, HarnessKind, ModelName, OpenCodeConfig, RawEventRetention,
 };
 use meter_engine::HarnessOptions;
 use serde_json::Value;
@@ -23,6 +23,7 @@ pub fn harness_config(
 ) -> anyhow::Result<RunHarnessConfig> {
     validate_codex_option_scope(args)?;
     validate_claude_option_scope(args)?;
+    validate_opencode_option_scope(args)?;
     validate_dangerous_bypass(args)?;
     let execution_permission = execution_permission(args);
 
@@ -59,18 +60,25 @@ pub fn harness_config(
             raw_event_retention: RawEventRetention::Disabled,
             ..ClaudeConfig::default()
         }),
-        HarnessKind::Gemini => HarnessConfig::Gemini(meter_core::GeminiConfig {
+        HarnessKind::OpenCode => HarnessConfig::OpenCode(OpenCodeConfig {
             model: model.clone(),
+            raw_event_retention: RawEventRetention::Disabled,
+            agent: args
+                .opencode_agent
+                .as_ref()
+                .map(|agent| validate_non_empty("opencode agent", agent))
+                .transpose()?,
+            ..OpenCodeConfig::default()
         }),
-        HarnessKind::Litellm => HarnessConfig::Litellm(meter_core::LitellmConfig {
+        HarnessKind::Gemini => HarnessConfig::Gemini(meter_core::GeminiConfig {
             model: model.clone(),
         }),
     };
     let raw_event_retention = match &config {
         HarnessConfig::Codex(config) => config.raw_event_retention.clone(),
         HarnessConfig::Claude(config) => config.raw_event_retention.clone(),
+        HarnessConfig::OpenCode(config) => config.raw_event_retention.clone(),
         HarnessConfig::Gemini(_) => RawEventRetention::Disabled,
-        HarnessConfig::Litellm(_) => RawEventRetention::Disabled,
     };
     let options = match args.harness {
         HarnessKind::Claude => {
@@ -80,7 +88,7 @@ pub fn harness_config(
                 _ => HarnessOptions::empty(),
             }
         }
-        HarnessKind::Codex | HarnessKind::Gemini | HarnessKind::Litellm => HarnessOptions::empty(),
+        HarnessKind::Codex | HarnessKind::OpenCode | HarnessKind::Gemini => HarnessOptions::empty(),
     };
     Ok(RunHarnessConfig {
         config,
@@ -103,7 +111,7 @@ fn execution_permission(args: &RunArgs) -> ExecutionPermissionMode {
 }
 
 fn validate_dangerous_bypass(args: &RunArgs) -> anyhow::Result<()> {
-    if args.dangerous_bypass && matches!(args.harness, HarnessKind::Gemini | HarnessKind::Litellm) {
+    if args.dangerous_bypass && matches!(args.harness, HarnessKind::Gemini) {
         bail!(
             "--dangerous-bypass is not supported for --harness {}",
             args.harness
@@ -160,6 +168,17 @@ fn has_claude_options(args: &RunArgs) -> bool {
         || !args.claude_append_system_prompt_files.is_empty()
         || args.claude_max_turns.is_some()
         || args.claude_max_budget_usd.is_some()
+}
+
+fn validate_opencode_option_scope(args: &RunArgs) -> anyhow::Result<()> {
+    if args.harness == HarnessKind::OpenCode || !has_opencode_options(args) {
+        return Ok(());
+    }
+    bail!("OpenCode-specific --opencode-* options require --harness opencode")
+}
+
+fn has_opencode_options(args: &RunArgs) -> bool {
+    args.opencode_agent.is_some()
 }
 
 fn validate_non_empty(name: &str, value: &str) -> anyhow::Result<String> {
@@ -335,9 +354,11 @@ mod tests {
     }
 
     #[test]
-    fn litellm_config_exposes_neutral_run_fields() {
-        let model = ModelName::new("gpt-5").unwrap_or_else(|err| panic!("{err}"));
-        let args = run_args(HarnessKind::Litellm);
+    fn opencode_config_exposes_neutral_model_and_execution_permission() {
+        let model = ModelName::new("github-copilot/gpt-5").unwrap_or_else(|err| panic!("{err}"));
+        let mut args = run_args(HarnessKind::OpenCode);
+        args.dangerous_bypass = true;
+        args.opencode_agent = Some("build".to_owned());
 
         let config =
             harness_config(&args, Some(model.clone())).unwrap_or_else(|err| panic!("{err}"));
@@ -346,12 +367,34 @@ mod tests {
         assert_eq!(config.raw_event_retention, RawEventRetention::Disabled);
         assert_eq!(
             config.execution_permission,
-            ExecutionPermissionMode::Standard
+            ExecutionPermissionMode::DangerousBypass
         );
         assert!(config.options.values().is_empty());
         assert_eq!(
             config.config,
-            HarnessConfig::Litellm(meter_core::LitellmConfig { model: Some(model) })
+            HarnessConfig::OpenCode(OpenCodeConfig {
+                model: Some(model),
+                raw_event_retention: RawEventRetention::Disabled,
+                agent: Some("build".to_owned()),
+                ..OpenCodeConfig::default()
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_opencode_options_for_non_opencode_harness() {
+        let mut args = run_args(HarnessKind::Codex);
+        args.opencode_agent = Some("build".to_owned());
+
+        let error = match harness_config(&args, None) {
+            Ok(_) => panic!("expected harness config error"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("OpenCode-specific --opencode-* options require --harness opencode")
         );
     }
 
@@ -387,23 +430,6 @@ mod tests {
             error
                 .to_string()
                 .contains("--dangerous-bypass is not supported for --harness gemini")
-        );
-    }
-
-    #[test]
-    fn rejects_dangerous_bypass_for_litellm() {
-        let mut args = run_args(HarnessKind::Litellm);
-        args.dangerous_bypass = true;
-
-        let error = match harness_config(&args, None) {
-            Ok(_) => panic!("expected harness config error"),
-            Err(error) => error,
-        };
-
-        assert!(
-            error
-                .to_string()
-                .contains("--dangerous-bypass is not supported for --harness litellm")
         );
     }
 
@@ -490,6 +516,7 @@ mod tests {
             codex_approve_for_me: false,
             codex_yolo: false,
             codex_config: Vec::new(),
+            opencode_agent: None,
         }
     }
 }

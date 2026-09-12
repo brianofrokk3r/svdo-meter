@@ -13,7 +13,7 @@ The v0.1 baseline centers on:
 - `svdo-meter run`
 - `svdo-meter eval run`
 - `svdo-meter telemetry`
-- the `codex` and `claude` harnesses
+- the `codex`, `claude`, and `opencode` harnesses
 - local per-run JSONL telemetry under `.svdo/meter/`
 - repository alignment eval definitions under `.svdo/evals/`
 - optional live stdout NDJSON event streaming from `svdo-meter run`
@@ -129,7 +129,7 @@ Prerequisites:
 - Cargo on `PATH`
 - `codex` on `PATH` when running the Codex harness for real work
 - `claude` on `PATH` and authenticated when running the Claude Code harness for real work
-- `LITELLM_API_KEY` in the environment when running the LiteLLM harness for real work
+- `opencode` on `PATH` when running the OpenCode harness for real work
 
 Build the debug binary:
 
@@ -212,23 +212,30 @@ claude -p "Implement the password reset flow described in ENG-142" --output-form
 
 Supported Claude-specific options include `--claude-permission-mode`, `--claude-allowed-tool`, `--claude-disallowed-tool`, `--claude-add-dir`, `--claude-mcp-config`, `--claude-strict-mcp-config`, `--claude-settings`, `--claude-setting-sources`, system prompt flags, `--claude-max-turns`, and `--claude-max-budget-usd`.
 
-## Run LiteLLM With Telemetry
+## Run OpenCode With Telemetry
 
-LiteLLM runs call the LiteLLM-compatible API directly. Configure authentication with `LITELLM_API_KEY` before selecting the harness; the key is read from the process environment and is not written to telemetry.
+OpenCode runs use non-interactive `opencode run` mode with JSON output requested for machine-readable telemetry.
 
 ```bash
-export LITELLM_API_KEY
-
 svdo-meter run \
   --ticket ENG-142 \
   --label "Add password reset flow" \
-  --harness litellm \
-  --model gpt-5 \
+  --harness opencode \
+  --model github-copilot/gpt-5 \
+  --opencode-agent build \
   --workspace ~/code/app \
   "Implement the password reset flow described in ENG-142"
 ```
 
-Set `LITELLM_API_BASE` when targeting a LiteLLM-compatible API base other than the default. Do not include API keys in command arguments, prompts, fixtures, or telemetry examples.
+Conceptual OpenCode invocation:
+
+```bash
+opencode run --format json --dir ~/code/app --model github-copilot/gpt-5 --agent build "Implement the password reset flow described in ENG-142"
+```
+
+Use `--opencode-agent <AGENT>` to pass an OpenCode agent name through as `opencode run --agent <AGENT>`.
+Use `--dangerous-bypass` only when OpenCode should run with automatic execution; SVDO Meter maps that posture to OpenCode `--auto` and records it on `run.started` telemetry.
+When `--session <SESSION>` is supplied, SVDO Meter maps it to `opencode run --session <SESSION>`. If durable telemetry already contains a discovered OpenCode session for the same ticket, harness, and workspace, later runs can reuse that session through the same OpenCode session flag.
 
 For longer or reusable instructions, read the prompt from a UTF-8 text file:
 
@@ -278,6 +285,12 @@ svdo-meter run --ticket ENG-142 --harness claude --claude-resume auth-refactor "
 svdo-meter run --ticket ENG-142 --harness claude --claude-resume auth-refactor --claude-fork-session "Try an alternate fix"
 ```
 
+For OpenCode, `--session` maps to `opencode run --session <session>` while preserving JSON output and model pass-through:
+
+```bash
+svdo-meter run --ticket ENG-142 --harness opencode --session ses_abc123 "Continue this fix"
+```
+
 ## Select A Model
 
 Models are harness-specific configuration, not separate adapters:
@@ -291,7 +304,7 @@ svdo-meter run \
   "Implement ENG-142"
 ```
 
-For Claude Code, `--model` maps to `claude --model` and accepts Claude Code aliases or full model identifiers supported by the installed Claude CLI.
+For Claude Code, `--model` maps to `claude --model` and accepts Claude Code aliases or full model identifiers supported by the installed Claude CLI. For OpenCode, `--model` maps to `opencode run --model` and accepts provider/model values supported by the installed OpenCode CLI.
 
 ## Estimate Token Cost
 
@@ -307,7 +320,7 @@ When telemetry references a model that is not present in the pricing JSON, the r
 
 SVDO Meter fits best as a lightweight operating layer for AI-assisted repository work:
 
-1. Observe agent work by wrapping meaningful Codex, Claude Code, or LiteLLM sessions with `svdo-meter run`.
+1. Observe agent work by wrapping meaningful Codex, Claude Code, or OpenCode sessions with `svdo-meter run`.
 2. Align the repository by defining deterministic checks and optional judge checks under `.svdo/evals/` and `.svdo/standards/`.
 3. Govern stable expectations by running trusted evals in CI and publishing reports or artifacts for review.
 
@@ -374,10 +387,9 @@ Run judge checks with an LLM judge:
 svdo-meter eval run --harness codex --model gpt-5
 svdo-meter eval run api-contract --harness codex --model gpt-5
 svdo-meter eval run --harness claude --model sonnet
-svdo-meter eval run --harness litellm --model gpt-5
 ```
 
-Command checks run locally in the selected workspace. Judge checks are skipped unless `--harness codex`, `--harness claude`, `--harness litellm`, or `--judge-command` is configured. The Codex and Claude judge paths invoke the selected CLI with the selected model and ask for a JSON score. The LiteLLM judge path calls the LiteLLM-compatible API directly using `LITELLM_API_KEY`. Custom judge commands receive the request JSON path as their final argument, also available as `SVDO_METER_JUDGE_REQUEST`, and must print JSON containing a `score` from `0.0` to `1.0` plus optional `passed`, `violations`, usage, model, harness, and session metadata.
+Command checks run locally in the selected workspace. Judge checks are skipped unless `--harness codex`, `--harness claude`, or `--judge-command` is configured. The Codex and Claude judge paths invoke the selected CLI with the selected model and ask for a JSON score. Custom judge commands receive the request JSON path as their final argument, also available as `SVDO_METER_JUDGE_REQUEST`, and must print JSON containing a `score` from `0.0` to `1.0` plus optional `passed`, `violations`, usage, model, harness, and session metadata.
 
 ## Telemetry
 
