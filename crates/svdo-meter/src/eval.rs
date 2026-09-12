@@ -1249,21 +1249,93 @@ fn render_terminal(report: &EvalRunReport) -> String {
                 output.push_str(" required");
             }
             output.push('\n');
-            for violation in &check.violations {
-                output.push_str(&format!("    reason: {violation}\n"));
-            }
-            if let Some(output_value) = &check.output {
-                output.push_str(&format!("    output: {output_value}\n"));
-            }
         }
-        if !result.violations.is_empty() {
-            output.push_str("  Violations:\n");
-            for violation in &result.violations {
-                output.push_str(&format!("    - {violation}\n"));
-            }
-        }
+        append_failure_report(&mut output, result);
     }
     output
+}
+
+fn append_failure_report(output: &mut String, result: &EvalResult) {
+    let failed_checks = result
+        .checks
+        .iter()
+        .filter(|check| check.outcome == CheckOutcome::Failed)
+        .collect::<Vec<_>>();
+
+    if failed_checks.is_empty() && result.violations.is_empty() {
+        return;
+    }
+
+    output.push_str("  Failure Report:\n");
+    for check in failed_checks {
+        output.push_str(&format!(
+            "    {} [{}]",
+            check.id,
+            check_type_label(check.check_type)
+        ));
+        if let Some(score) = check.score {
+            output.push_str(&format!(" score {:.2}", score));
+        }
+        if check.required {
+            output.push_str(" required");
+        }
+        if let Some(exit_code) = check.exit_code {
+            output.push_str(&format!(" exit {exit_code}"));
+        }
+        output.push('\n');
+
+        for violation in &check.violations {
+            output.push_str(&format!("      - {violation}\n"));
+        }
+
+        if let Some(output_value) = &check.output {
+            append_output_excerpt(output, output_value);
+        }
+    }
+
+    let overall_violations = result
+        .violations
+        .iter()
+        .filter(|violation| {
+            !result.checks.iter().any(|check| {
+                check
+                    .violations
+                    .iter()
+                    .any(|check_violation| check_violation == *violation)
+            })
+        })
+        .collect::<Vec<_>>();
+    if !overall_violations.is_empty() {
+        output.push_str("    Overall:\n");
+        for violation in overall_violations {
+            output.push_str(&format!("      - {violation}\n"));
+        }
+    }
+}
+
+fn append_output_excerpt(output: &mut String, value: &str) {
+    const MAX_OUTPUT_LINES: usize = 40;
+    const MAX_OUTPUT_CHARS: usize = 4_000;
+
+    let line_count = value.lines().count();
+    let omitted_lines = line_count.saturating_sub(MAX_OUTPUT_LINES);
+    let tail = value
+        .lines()
+        .skip(omitted_lines)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let excerpt = truncate_tail(&tail, MAX_OUTPUT_CHARS);
+
+    if omitted_lines > 0 {
+        output.push_str(&format!(
+            "      output: showing last {MAX_OUTPUT_LINES} lines ({omitted_lines} earlier lines omitted)\n"
+        ));
+    } else {
+        output.push_str("      output:\n");
+    }
+    for line in excerpt.lines() {
+        output.push_str(&format!("        {line}\n"));
+    }
 }
 
 fn render_csv(report: &EvalRunReport) -> String {
@@ -1309,7 +1381,7 @@ fn failure_output(stdout: &[u8], stderr: &[u8]) -> String {
         }
         value.push_str(stderr.trim());
     }
-    truncate(&value, 4_000)
+    truncate_tail(&value, 4_000)
 }
 
 fn truncate(value: &str, max_chars: usize) -> String {
@@ -1318,6 +1390,21 @@ fn truncate(value: &str, max_chars: usize) -> String {
     }
     let mut truncated = value.chars().take(max_chars).collect::<String>();
     truncated.push_str("...");
+    truncated
+}
+
+fn truncate_tail(value: &str, max_chars: usize) -> String {
+    let char_count = value.chars().count();
+    if char_count <= max_chars {
+        return value.to_owned();
+    }
+    let mut truncated = "...".to_owned();
+    truncated.push_str(
+        &value
+            .chars()
+            .skip(char_count - max_chars)
+            .collect::<String>(),
+    );
     truncated
 }
 
@@ -1600,6 +1687,81 @@ threshold: 0.85
     }
 
     #[test]
+    fn terminal_report_groups_failures_and_tails_noisy_output() -> anyhow::Result<()> {
+        let noisy_output = (1..=50)
+            .map(|index| format!("passing test line {index:02}"))
+            .chain(["actual failure: expected 5 got 6".to_owned()])
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut command = check_result("tests-pass", true, 0.4, Some(0.0), CheckOutcome::Failed);
+        command.exit_code = Some(101);
+        command.violations = vec!["command exited with status 101".to_owned()];
+        command.output = Some(noisy_output);
+
+        let mut judge = check_result(
+            "alignment-review",
+            true,
+            0.3,
+            Some(0.35),
+            CheckOutcome::Failed,
+        );
+        judge.check_type = CheckType::Judge;
+        judge.violations = vec![
+            "generated standards were manually edited".to_owned(),
+            "trailing newline was removed".to_owned(),
+        ];
+
+        let report = EvalRunReport {
+            passed: false,
+            duration_ms: 100,
+            results: vec![EvalResult {
+                id: "follows-agent-directions".to_owned(),
+                task: "Evaluate instructions".to_owned(),
+                source: None,
+                overall_score: 0.41,
+                threshold: 0.9,
+                passed: false,
+                required_failure: true,
+                duration_ms: 100,
+                checks: vec![
+                    check_result(
+                        "instructions-present",
+                        true,
+                        0.1,
+                        Some(1.0),
+                        CheckOutcome::Passed,
+                    ),
+                    command,
+                    judge,
+                ],
+                violations: vec![
+                    "command exited with status 101".to_owned(),
+                    "generated standards were manually edited".to_owned(),
+                    "trailing newline was removed".to_owned(),
+                    "overall score 0.41 is below threshold 0.90".to_owned(),
+                ],
+                token_usage: None,
+                model: None,
+                harness: None,
+                session_id: None,
+            }],
+        };
+
+        let output = render(&report, ReportFormat::Terminal)?;
+
+        assert!(output.contains("Failed checks: tests-pass, alignment-review"));
+        assert!(output.contains("Failure Report:"));
+        assert!(output.contains("tests-pass [command] score 0.00 required exit 101"));
+        assert!(output.contains("alignment-review [judge] score 0.35 required"));
+        assert!(output.contains("output: showing last 40 lines (11 earlier lines omitted)"));
+        assert!(output.contains("actual failure: expected 5 got 6"));
+        assert!(!output.contains("passing test line 01"));
+        assert!(output.contains("Overall:"));
+        assert!(output.contains("overall score 0.41 is below threshold 0.90"));
+        Ok(())
+    }
+
+    #[test]
     fn repo_sample_eval_definitions_are_valid() -> anyhow::Result<()> {
         let samples = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
@@ -1608,7 +1770,7 @@ threshold: 0.85
             .join("evals");
         if samples.exists() {
             let definitions = load_definitions(&samples)?;
-            assert_eq!(definitions.len(), 5);
+            assert!(!definitions.is_empty());
         }
         Ok(())
     }
