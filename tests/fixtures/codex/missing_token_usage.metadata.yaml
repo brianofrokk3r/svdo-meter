@@ -1,0 +1,4 @@
+provider: codex
+cli_version: 0.154.0
+schema_observed: 2026-09-11
+model: gpt-5
