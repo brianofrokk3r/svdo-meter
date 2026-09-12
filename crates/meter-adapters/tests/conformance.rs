@@ -42,6 +42,8 @@ struct ConformanceCase {
     version: &'static str,
     fixture_path: &'static str,
     fixture: &'static str,
+    metadata_path: Option<&'static str>,
+    metadata: Option<&'static str>,
     harness: HarnessKind,
     expected_events: Vec<ExpectedEvent>,
     expected_metrics: RunMetrics,
@@ -76,6 +78,12 @@ struct NormalizedFixture {
 }
 
 fn assert_case(case: ConformanceCase) {
+    assert_eq!(
+        case.metadata_path.is_some(),
+        case.metadata.is_some(),
+        "{}: fixture metadata path/content must be provided together",
+        case_id(&case)
+    );
     let actual = normalize_fixture(&case);
     let actual_events: Vec<_> = actual.events.iter().map(summarize_event).collect();
     let expected_events: Vec<_> = case
@@ -254,6 +262,8 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "gpt-5/captured-current",
             fixture_path: "tests/fixtures/codex/successful_run.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/successful_run.jsonl"),
+            metadata_path: None,
+            metadata: None,
             harness: HarnessKind::Codex,
             expected_events: vec![
                 event(
@@ -357,6 +367,8 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/failed_run.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/failed_run.jsonl"),
+            metadata_path: None,
+            metadata: None,
             harness: HarnessKind::Codex,
             expected_events: vec![
                 event(
@@ -406,6 +418,8 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/resumed_session.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/resumed_session.jsonl"),
+            metadata_path: None,
+            metadata: None,
             harness: HarnessKind::Codex,
             expected_events: vec![
                 event(
@@ -443,6 +457,8 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/interrupted_run.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/interrupted_run.jsonl"),
+            metadata_path: None,
+            metadata: None,
             harness: HarnessKind::Codex,
             expected_events: vec![event(
                 "session.discovered",
@@ -464,6 +480,8 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/malformed_event.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/malformed_event.jsonl"),
+            metadata_path: None,
+            metadata: None,
             harness: HarnessKind::Codex,
             expected_events: vec![event(
                 "session.discovered",
@@ -485,6 +503,8 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/missing_token_usage.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/missing_token_usage.jsonl"),
+            metadata_path: None,
+            metadata: None,
             harness: HarnessKind::Codex,
             expected_events: Vec::new(),
             expected_metrics: RunMetrics {
@@ -502,6 +522,8 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/unknown_event.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/unknown_event.jsonl"),
+            metadata_path: None,
+            metadata: None,
             harness: HarnessKind::Codex,
             expected_events: Vec::new(),
             expected_metrics: RunMetrics {
@@ -522,6 +544,8 @@ fn claude_cases() -> Vec<ConformanceCase> {
             version: "claude-sonnet-5/captured-current",
             fixture_path: "tests/fixtures/claude/successful_run.jsonl",
             fixture: include_str!("../../../tests/fixtures/claude/successful_run.jsonl"),
+            metadata_path: None,
+            metadata: None,
             harness: HarnessKind::Claude,
             expected_events: vec![
                 event(
@@ -592,6 +616,8 @@ fn claude_cases() -> Vec<ConformanceCase> {
             version: "claude-sonnet-5/captured-current",
             fixture_path: "tests/fixtures/claude/failed_run.jsonl",
             fixture: include_str!("../../../tests/fixtures/claude/failed_run.jsonl"),
+            metadata_path: None,
+            metadata: None,
             harness: HarnessKind::Claude,
             expected_events: vec![event(
                 "session.discovered",
@@ -614,6 +640,8 @@ fn claude_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/claude/unknown_event.jsonl",
             fixture: include_str!("../../../tests/fixtures/claude/unknown_event.jsonl"),
+            metadata_path: None,
+            metadata: None,
             harness: HarnessKind::Claude,
             expected_events: Vec::new(),
             expected_metrics: RunMetrics {
@@ -634,6 +662,8 @@ fn opencode_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/opencode/successful_run.jsonl",
             fixture: include_str!("../../../tests/fixtures/opencode/successful_run.jsonl"),
+            metadata_path: None,
+            metadata: None,
             harness: HarnessKind::OpenCode,
             expected_events: vec![
                 event(
@@ -696,6 +726,8 @@ fn opencode_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/opencode/unknown_event.jsonl",
             fixture: include_str!("../../../tests/fixtures/opencode/unknown_event.jsonl"),
+            metadata_path: None,
+            metadata: None,
             harness: HarnessKind::OpenCode,
             expected_events: vec![event(
                 "session.discovered",
@@ -716,6 +748,8 @@ fn opencode_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/opencode/malformed_event.jsonl",
             fixture: include_str!("../../../tests/fixtures/opencode/malformed_event.jsonl"),
+            metadata_path: None,
+            metadata: None,
             harness: HarnessKind::OpenCode,
             expected_events: vec![event(
                 "session.discovered",
