@@ -9,6 +9,9 @@
 - Added JSON artifact enrichment from `.svdo/runs/` and `.svdo/evals/` so compare reports can include cost, eval score, required checks, violations, and rework metrics.
 - Preserved unavailable metrics distinctly from observed zero values, rendering missing values as `—` while keeping true zeroes visible as `0`.
 - Added fixture-backed unit and integration coverage for ticket-specific comparison, aggregate comparison, repeated filters, model alias matching, artifact enrichment, and unavailable-vs-zero rendering.
+- Generalized conformance fixture metadata validation so provider, CLI version, observed schema date, and model are required for every provider case instead of only Codex.
+- Added OpenCode and Claude conformance metadata sidecars, including OpenCode provider/version metadata for existing successful, unknown-event, and malformed-event fixtures.
+- Updated conformance fixture documentation to describe provider-neutral metadata capture and refresh expectations.
 
 ## 2026-09-12
 
