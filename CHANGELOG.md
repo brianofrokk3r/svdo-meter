@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-13
+
+- Generalized conformance fixture metadata validation so provider, CLI version, observed schema date, and model are required for every provider case instead of only Codex.
+- Added OpenCode and Claude conformance metadata sidecars, including OpenCode provider/version metadata for existing successful, unknown-event, and malformed-event fixtures.
+- Updated conformance fixture documentation to describe provider-neutral metadata capture and refresh expectations.
+
 ## 2026-09-12
 
 - Added first-class OpenCode harness support for `svdo-meter run --harness opencode`.
