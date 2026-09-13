@@ -379,6 +379,57 @@ svdo-meter compare \
 
 The comparison report derives canonical run-summary style records from `.svdo/meter/*.jsonl`, then enriches matching runs from JSON artifacts under `.svdo/runs/` and `.svdo/evals/` when those files are present. It reports performance, cost, quality, and efficiency metrics. Missing observability is shown as `—`; true observed zeroes remain visible as `0`.
 
+## Run The Calculator Benchmark Example
+
+The calculator example exercises the full production flow from the README with a small deterministic task:
+
+```text
+svdo-meter run -> svdo-meter eval run -> svdo-meter report -> svdo-meter compare
+```
+
+It compares Codex and OpenCode on the same prompt and eval:
+
+- Codex model: `gpt-5.5`
+- OpenCode model: `codex/gpt-5.5`
+- Prompt: `examples/calculator/TASK.md`
+- Eval: `examples/calculator/.svdo/evals/calc-implementation.yaml`
+
+Build or install `svdo-meter`, make sure `codex`, `opencode`, and `python3` are available on `PATH`, then run:
+
+```bash
+./examples/calculator/benchmark-gpt55-codex-vs-opencode.sh
+```
+
+The script creates an isolated temporary workspace, copies only the calculator eval definition into that workspace, runs each harness with `--prompt-file`, evaluates the generated `calc.py`, writes compare enrichment artifacts under `.svdo/evals/`, and prints both `svdo-meter report` and `svdo-meter compare` output. The temporary workspace is kept so you can inspect generated files and telemetry after the run:
+
+```text
+<temp-workspace>/
+  calc.py
+  .svdo/
+    meter/
+    evals/
+```
+
+If `svdo-meter` is not installed, the script falls back to `./target/debug/svdo-meter` when present. You can override the defaults with environment variables:
+
+```bash
+SVDO_METER_BIN=./target/debug/svdo-meter \
+SVDO_BENCH_WORK=CALC-GPT55-MANUAL \
+SVDO_BENCH_WORKSPACE=/tmp/svdo-calc-gpt55 \
+./examples/calculator/benchmark-gpt55-codex-vs-opencode.sh
+```
+
+Additional knobs are available for model or agent experiments:
+
+```bash
+SVDO_BENCH_CODEX_MODEL=gpt-5.5 \
+SVDO_BENCH_OPENCODE_MODEL=codex/gpt-5.5 \
+SVDO_BENCH_OPENCODE_AGENT=build \
+./examples/calculator/benchmark-gpt55-codex-vs-opencode.sh
+```
+
+The benchmark uses `--dangerous-bypass` because it runs in an isolated throwaway workspace. Use that posture only for workspaces where automatic edits and command execution are acceptable.
+
 ## Apply SVDO Meter To A Repository
 
 SVDO Meter fits best as a lightweight operating layer for AI-assisted repository work:
