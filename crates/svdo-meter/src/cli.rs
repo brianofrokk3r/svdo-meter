@@ -18,6 +18,11 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
+    #[command(about = "Compare SVDO Meter telemetry and eval results across runs")]
+    #[command(
+        after_help = "Examples:\n  svdo-meter compare ENG-142\n  svdo-meter compare --harness codex --harness claude --harness opencode --since 30d\n  svdo-meter compare --harness opencode --model openai/gpt-5.6 --model anthropic/claude-sonnet-5\n  svdo-meter compare --model gpt-5.6 --harness codex --harness opencode\n\nComparison reports will read canonical run summaries derived from .svdo/meter/, .svdo/runs/, and .svdo/evals/ under --workspace or the current directory."
+    )]
+    Compare(CompareArgs),
     #[command(about = "Run repository alignment evals")]
     #[command(
         after_help = "Examples:\n  svdo-meter eval run\n  svdo-meter eval run add-account-endpoint\n  svdo-meter eval run add-account-endpoint --format json\n  svdo-meter eval run smoke.yaml --format csv\n\nEval definitions are read from .svdo/evals/ under --workspace or the current directory. Referenced standards are read from .svdo/standards/."
@@ -38,6 +43,29 @@ pub enum Commands {
         after_help = "Examples:\n  svdo-meter telemetry sessions\n  svdo-meter telemetry runs\n  svdo-meter telemetry inspect 018f6f1b-97f1-7c04-9a96-111111111111\n  svdo-meter telemetry inspect sess-abc123\n\nTelemetry inspection reads per-run streams from .svdo/meter/ under --workspace or the current directory. Malformed JSONL lines are reported as diagnostics while valid records remain inspectable."
     )]
     Telemetry(TelemetryArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct CompareArgs {
+    /// Optional ticket or work identifier to compare. When omitted, aggregate matching runs.
+    #[arg(value_name = "WORK")]
+    pub work: Option<String>,
+
+    /// Workspace containing `.svdo/` artifacts. Defaults to the current directory.
+    #[arg(long)]
+    pub workspace: Option<PathBuf>,
+
+    /// Include only this harness. Repeat to compare multiple harnesses.
+    #[arg(long = "harness", value_name = "HARNESS")]
+    pub harnesses: Vec<HarnessKind>,
+
+    /// Include only this model. Repeat to compare multiple models.
+    #[arg(long = "model", value_name = "MODEL")]
+    pub models: Vec<String>,
+
+    /// Include only runs observed within a recent duration such as `30d`, `12h`, or `45m`.
+    #[arg(long, value_name = "DURATION")]
+    pub since: Option<ReportDuration>,
 }
 
 #[derive(Debug, Args)]
@@ -869,6 +897,83 @@ mod tests {
     }
 
     #[test]
+    fn parses_compare_work_with_default_filters() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from(["svdo-meter", "compare", "ENG-142"])?;
+        let Commands::Compare(args) = cli.command else {
+            panic!("expected compare command");
+        };
+
+        assert_eq!(args.work.as_deref(), Some("ENG-142"));
+        assert_eq!(args.workspace, None);
+        assert!(args.harnesses.is_empty());
+        assert!(args.models.is_empty());
+        assert_eq!(args.since, None);
+        Ok(())
+    }
+
+    #[test]
+    fn parses_compare_repeated_filters_and_since() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "compare",
+            "--workspace",
+            "/tmp/workspace",
+            "--harness",
+            "codex",
+            "--harness",
+            "claude",
+            "--model",
+            "gpt-5.6",
+            "--model",
+            "sonnet-5",
+            "--since",
+            "30d",
+        ])?;
+        let Commands::Compare(args) = cli.command else {
+            panic!("expected compare command");
+        };
+
+        assert_eq!(args.work, None);
+        assert_eq!(
+            args.workspace.as_deref(),
+            Some(std::path::Path::new("/tmp/workspace"))
+        );
+        assert_eq!(
+            args.harnesses,
+            vec![HarnessKind::Codex, HarnessKind::Claude]
+        );
+        assert_eq!(args.models, vec!["gpt-5.6", "sonnet-5"]);
+        assert_eq!(
+            args.since.map(|duration| duration.as_duration().as_secs()),
+            Some(2_592_000)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_invalid_compare_duration() {
+        let result = Cli::try_parse_from(["svdo-meter", "compare", "--since", "30w"]);
+
+        assert_eq!(parse_error_kind(result), ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn compare_help_documents_filters() {
+        let mut command = Cli::command();
+        let compare = command
+            .find_subcommand_mut("compare")
+            .expect("compare subcommand exists");
+        let help = compare.render_help().to_string();
+
+        assert!(help.contains("svdo-meter compare ENG-142"));
+        assert!(help.contains("WORK"));
+        assert!(help.contains("--workspace <WORKSPACE>"));
+        assert!(help.contains("--harness <HARNESS>"));
+        assert!(help.contains("--model <MODEL>"));
+        assert!(help.contains("--since <DURATION>"));
+    }
+
+    #[test]
     fn parses_report_work_and_json_format() -> anyhow::Result<()> {
         let cli = Cli::try_parse_from(["svdo-meter", "report", "ENG-142", "--format", "json"])?;
         let Commands::Report(args) = cli.command else {
@@ -1225,9 +1330,11 @@ mod tests {
         let help = Cli::command().render_help().to_string();
 
         assert!(help.contains("run"));
+        assert!(help.contains("compare"));
         assert!(help.contains("eval"));
         assert!(help.contains("report"));
         assert!(help.contains("telemetry"));
+        assert!(help.contains("Compare SVDO Meter telemetry and eval results across runs"));
         assert!(help.contains("Run repository alignment evals"));
         assert!(help.contains("Run measured agent CLI work"));
         assert!(help.contains("Generate a local SVDO Trace report"));
@@ -1236,6 +1343,10 @@ mod tests {
 
     #[test]
     fn command_help_documents_nested_paths() {
+        assert_help_contains(
+            ["svdo-meter", "compare", "--help"],
+            "svdo-meter compare ENG-142",
+        );
         assert_help_contains(["svdo-meter", "run", "--help"], "svdo-meter run --ticket");
         assert_help_contains(["svdo-meter", "eval", "--help"], "run");
         assert_help_contains(

@@ -5,10 +5,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const REPORT_FIXTURE: &str = include_str!("../../../tests/fixtures/report/single_work.jsonl");
 const TELEMETRY_FIXTURE: &str = include_str!("../../../tests/fixtures/telemetry/valid.jsonl");
+const COMPARISON_FIXTURE: &str =
+    include_str!("../../../tests/fixtures/comparison/comparable_runs.jsonl");
+const COMPARE_ENG_142_FIXTURE: &str = include_str!("../../../tests/fixtures/compare/eng_142.jsonl");
+const COMPARE_AGGREGATE_FIXTURE: &str =
+    include_str!("../../../tests/fixtures/compare/aggregate_recent.jsonl");
 
 #[test]
 fn help_succeeds_for_documented_command_paths() {
     assert_success_contains(&["--help"], "svdo-meter");
+    assert_success_contains(&["--help"], "compare");
+    assert_success_contains(&["compare", "--help"], "svdo-meter compare ENG-142");
     assert_success_contains(&["--help"], "telemetry");
     assert_success_contains(&["run", "--help"], "svdo-meter run --ticket");
     assert_success_contains(&["eval", "--help"], "Run one eval");
@@ -36,6 +43,264 @@ fn help_succeeds_for_documented_command_paths() {
         &["eval", "run", "--help"],
         "codex, claude, opencode, gemini",
     );
+}
+
+#[test]
+fn compare_command_accepts_work_and_repeated_filters() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-compare-integration");
+    let telemetry_dir = workspace.join(".svdo").join("meter");
+    fs::create_dir_all(&telemetry_dir)?;
+    fs::write(telemetry_dir.join("runs.jsonl"), COMPARISON_FIXTURE)?;
+
+    let output = run_svdo_meter(&[
+        "compare",
+        "ENG-142",
+        "--workspace",
+        path_str(&workspace)?,
+        "--harness",
+        "codex",
+        "--harness",
+        "opencode",
+        "--model",
+        "gpt-5.6",
+        "--model",
+        "github-copilot/gpt-5",
+        "--model",
+        "anthropic/claude-sonnet-5",
+        "--since",
+        "30d",
+    ]);
+
+    assert!(output.status.success());
+    assert_stdout_contains(&output, "SVDO Comparison — ENG-142");
+    assert_stdout_contains(&output, "Codex");
+    assert_stdout_contains(&output, "OpenCode");
+    assert_stdout_contains(&output, "Runs");
+    assert_stdout_contains(&output, "Skipped line 3");
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn compare_command_renders_ticket_fixture_with_unavailable_and_zero_metrics() -> std::io::Result<()>
+{
+    let workspace = unique_temp_path("svdo-meter-compare-ticket-fixture");
+    write_workspace_telemetry_streams(&workspace, COMPARE_ENG_142_FIXTURE)?;
+    write_compare_artifact(
+        &workspace,
+        "evals/eng-142-results.json",
+        r#"
+{
+  "results": [
+    {
+      "run_id": "018f6f1b-97f1-7c04-9a96-aaaaaaaaaaa1",
+      "overall_score": 0.94,
+      "checks": [
+        {"id": "a", "required": true, "outcome": "passed"},
+        {"id": "b", "required": true, "outcome": "passed"}
+      ],
+      "violations": ["minor"]
+    },
+    {
+      "run_id": "018f6f1b-97f1-7c04-9a96-bbbbbbbbbbb2",
+      "overall_score": 0.97,
+      "required_checks": {"passed": 2, "total": 2},
+      "violations": []
+    },
+    {
+      "run_id": "018f6f1b-97f1-7c04-9a96-ddddddddddd4",
+      "overall_score": 0.88,
+      "required_checks_passed": 1,
+      "required_checks_total": 2,
+      "violations_count": 3
+    }
+  ]
+}
+"#,
+    )?;
+    write_compare_artifact(
+        &workspace,
+        "runs/eng-142-costs.json",
+        r#"
+{
+  "results": [
+    {"run_id": "018f6f1b-97f1-7c04-9a96-aaaaaaaaaaa1", "estimated_cost_usd": 1.42, "rework_count": 0},
+    {"run_id": "018f6f1b-97f1-7c04-9a96-bbbbbbbbbbb2", "estimated_cost_usd": 1.19, "rework_count": 0},
+    {"run_id": "018f6f1b-97f1-7c04-9a96-ddddddddddd4", "estimated_cost_usd": 1.67, "rework_count": 1}
+  ]
+}
+"#,
+    )?;
+
+    let output = run_svdo_meter(&["compare", "ENG-142", "--workspace", path_str(&workspace)?]);
+
+    assert!(output.status.success());
+    assert_stdout_contains(&output, "SVDO Comparison — ENG-142");
+    assert_stdout_contains(&output, "Codex");
+    assert_stdout_contains(&output, "Claude");
+    assert_stdout_contains(&output, "OpenCode");
+    assert_stdout_row_contains(&output, "Runs", &["1", "1", "1", "1"]);
+    assert_stdout_row_contains(&output, "Commands", &["14", "0", "—"]);
+    assert_stdout_row_contains(&output, "Tool calls", &["27", "31", "42"]);
+    assert_stdout_row_contains(&output, "Input tokens", &["145k", "182k", "210k"]);
+    assert_stdout_row_contains(&output, "Est. cost", &["$1.19", "$1.42", "$1.67"]);
+    assert_stdout_row_contains(&output, "Eval score", &[".88", ".94", ".97"]);
+    assert_stdout_row_contains(&output, "Required checks", &["1/2", "2/2"]);
+    assert_stdout_row_contains(&output, "Violations", &["0", "1", "3"]);
+
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn compare_command_renders_aggregate_fixture_with_repeated_harnesses_and_since()
+-> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-compare-aggregate-fixture");
+    write_workspace_telemetry_streams(&workspace, COMPARE_AGGREGATE_FIXTURE)?;
+
+    let output = run_svdo_meter(&[
+        "compare",
+        "--workspace",
+        path_str(&workspace)?,
+        "--harness",
+        "codex",
+        "--harness",
+        "claude",
+        "--harness",
+        "opencode",
+        "--since",
+        "30d",
+    ]);
+
+    assert!(output.status.success());
+    assert_stdout_contains(&output, "SVDO Comparison");
+    assert_stdout_row_contains(&output, "Tasks", &["2", "2", "2"]);
+    assert_stdout_row_contains(&output, "Pass rate", &["100%", "50%"]);
+    assert_stdout_row_contains(&output, "Median tokens", &["153k", "193.5k", "209k"]);
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("ENG-OLD"));
+
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn compare_command_supports_repeated_model_filters_within_harness() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-compare-model-fixture");
+    write_workspace_telemetry_streams(&workspace, COMPARE_ENG_142_FIXTURE)?;
+
+    let output = run_svdo_meter(&[
+        "compare",
+        "ENG-142",
+        "--workspace",
+        path_str(&workspace)?,
+        "--harness",
+        "opencode",
+        "--model",
+        "openai/gpt-5.6",
+        "--model",
+        "anthropic/claude-sonnet-5",
+    ]);
+
+    assert!(output.status.success());
+    assert_stdout_contains(&output, "gpt-5.6");
+    assert_stdout_contains(&output, "claude-sonnet-5");
+    assert_stdout_row_contains(&output, "Model", &["claude-sonnet-5", "gpt-5.6"]);
+    assert_stdout_row_contains(&output, "Runs", &["1", "1"]);
+    assert!(
+        !String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|line| line.contains("Commands"))
+    );
+
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn compare_command_supports_model_filter_across_repeated_harnesses() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-compare-model-harness-fixture");
+    write_workspace_telemetry_streams(&workspace, COMPARE_ENG_142_FIXTURE)?;
+
+    let output = run_svdo_meter(&[
+        "compare",
+        "ENG-142",
+        "--workspace",
+        path_str(&workspace)?,
+        "--model",
+        "gpt-5.6",
+        "--harness",
+        "codex",
+        "--harness",
+        "opencode",
+    ]);
+
+    assert!(output.status.success());
+    assert_stdout_contains(&output, "Codex / gpt-5.6");
+    assert_stdout_contains(&output, "OpenCode / gpt-5.6");
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("Claude /"));
+    assert_stdout_row_contains(&output, "Commands", &["0", "—"]);
+
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn compare_command_enriches_aggregate_metrics_from_eval_and_run_artifacts() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-compare-artifact-enrichment");
+    write_workspace_telemetry_streams(&workspace, COMPARE_AGGREGATE_FIXTURE)?;
+    write_compare_artifact(
+        &workspace,
+        "evals/recent-results.json",
+        r#"
+{
+  "results": [
+    {"run_id": "018f6f1b-97f1-7c04-9a96-eeeeeeeeeee1", "overall_score": 0.91},
+    {"run_id": "018f6f1b-97f1-7c04-9a96-eeeeeeeeeee2", "overall_score": 0.88},
+    {"run_id": "018f6f1b-97f1-7c04-9a96-fffffffffff3", "overall_score": 0.94},
+    {"run_id": "018f6f1b-97f1-7c04-9a96-fffffffffff4", "overall_score": 0.96},
+    {"run_id": "018f6f1b-97f1-7c04-9a96-999999999995", "overall_score": 0.86},
+    {"run_id": "018f6f1b-97f1-7c04-9a96-999999999996", "overall_score": 0.90}
+  ]
+}
+"#,
+    )?;
+    write_compare_artifact(
+        &workspace,
+        "runs/rework.json",
+        r#"
+{
+  "results": [
+    {"run_id": "018f6f1b-97f1-7c04-9a96-eeeeeeeeeee1", "rework_count": 1},
+    {"run_id": "018f6f1b-97f1-7c04-9a96-eeeeeeeeeee2", "rework_count": 2},
+    {"run_id": "018f6f1b-97f1-7c04-9a96-fffffffffff3", "rework_count": 0},
+    {"run_id": "018f6f1b-97f1-7c04-9a96-fffffffffff4", "rework_count": 0},
+    {"run_id": "018f6f1b-97f1-7c04-9a96-999999999995", "rework_count": 1},
+    {"run_id": "018f6f1b-97f1-7c04-9a96-999999999996", "rework_count": 3}
+  ]
+}
+"#,
+    )?;
+
+    let output = run_svdo_meter(&[
+        "compare",
+        "--workspace",
+        path_str(&workspace)?,
+        "--harness",
+        "codex",
+        "--harness",
+        "claude",
+        "--harness",
+        "opencode",
+        "--since",
+        "30d",
+    ]);
+
+    assert!(output.status.success());
+    assert_stdout_row_contains(&output, "Median eval", &[".90", ".95", ".88"]);
+    assert_stdout_row_contains(&output, "Median rework", &["1.5", "0", "2"]);
+
+    fs::remove_dir_all(workspace)?;
+    Ok(())
 }
 
 #[test]
@@ -875,6 +1140,27 @@ fn assert_stdout_contains(output: &Output, expected: &str) {
     );
 }
 
+fn assert_stdout_row_contains(output: &Output, label: &str, expected_cells: &[&str]) {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let row = stdout
+        .lines()
+        .find(|line| line.contains(label))
+        .unwrap_or_else(|| {
+            panic!(
+                "stdout did not contain row `{label}`:\nstatus: {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                output.status
+            )
+        });
+    for expected in expected_cells {
+        assert!(
+            row.split_whitespace().any(|cell| cell == *expected),
+            "row `{row}` did not contain cell `{expected}`:\nstatus: {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            output.status
+        );
+    }
+}
+
 fn assert_output_contains(output: &Output, expected: &str) {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -945,6 +1231,18 @@ fn write_eval_definition(workspace: &Path, file_name: &str, contents: &str) -> s
     let eval_dir = workspace.join(".svdo").join("evals");
     fs::create_dir_all(&eval_dir)?;
     fs::write(eval_dir.join(file_name), contents)
+}
+
+fn write_compare_artifact(
+    workspace: &Path,
+    relative_path: &str,
+    contents: &str,
+) -> std::io::Result<()> {
+    let path = workspace.join(".svdo").join(relative_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, contents)
 }
 
 fn write_standard(workspace: &Path, file_name: &str, contents: &str) -> std::io::Result<()> {

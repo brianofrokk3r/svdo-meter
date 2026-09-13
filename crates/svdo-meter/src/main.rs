@@ -10,8 +10,9 @@ use cli::{Cli, Commands, EvalCommands, ReportFormat, TelemetryCommands};
 use meter_core::{ModelName, SessionId, TicketId};
 use meter_engine::RunRequest;
 use meter_report::{
-    ReportQuery, render_csv, render_inspection, render_json, render_runs, render_sessions,
-    render_terminal,
+    ComparisonDiscoveryQuery, ComparisonQuery, ComparisonReducer, ReportQuery,
+    render_comparison_terminal, render_csv, render_inspection, render_json, render_runs,
+    render_sessions, render_terminal,
 };
 
 #[tokio::main]
@@ -23,6 +24,43 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
     match cli.command {
+        Commands::Compare(args) => {
+            let workspace = args.workspace.unwrap_or(std::env::current_dir()?);
+            let since = args
+                .since
+                .map(|duration| {
+                    ChronoDuration::from_std(duration.as_duration())
+                        .map(|duration| Utc::now() - duration)
+                })
+                .transpose()
+                .context("failed to convert --since duration")?;
+            let query = ComparisonDiscoveryQuery {
+                work: args.work,
+                harnesses: args
+                    .harnesses
+                    .into_iter()
+                    .map(|harness| harness.to_string())
+                    .collect(),
+                models: args.models,
+                since,
+            };
+            let telemetry_path = wiring::default_telemetry_path(&Some(workspace));
+            let report =
+                wiring::load_comparison_discovery(&telemetry_path, &query).with_context(|| {
+                    format!(
+                        "failed to read telemetry from `{}`",
+                        telemetry_path.display()
+                    )
+                })?;
+            let mut reducer = ComparisonReducer::new(ComparisonQuery {
+                work: query.work,
+                harnesses: query.harnesses,
+                models: query.models,
+            });
+            reducer.extend(report.runs);
+            reducer.add_diagnostics(report.diagnostics);
+            println!("{}", render_comparison_terminal(&reducer.finish()));
+        }
         Commands::Eval(args) => match args.command {
             EvalCommands::Run(args) => {
                 let workspace = args.workspace.unwrap_or(std::env::current_dir()?);

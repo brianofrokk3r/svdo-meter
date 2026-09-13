@@ -17,6 +17,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 const MAX_PROVIDER_LINE_BYTES: usize = 1024 * 1024;
+const MAX_FAILURE_REASON_BYTES: usize = 4096;
 
 #[derive(Debug, Clone)]
 pub struct OpenCodeAdapter {
@@ -148,8 +149,8 @@ impl OpenCodeAdapter {
         let status = child.wait().await.map_err(HarnessError::Io)?;
 
         Ok(OpenCodeAttemptResult {
+            result: opencode_result(status, normalizer, &stderr),
             stderr,
-            result: opencode_result(status, normalizer),
         })
     }
 }
@@ -160,7 +161,11 @@ struct OpenCodeAttemptResult {
     stderr: String,
 }
 
-fn opencode_result(status: ExitStatus, normalizer: OpenCodeEventNormalizer) -> HarnessRunResult {
+fn opencode_result(
+    status: ExitStatus,
+    normalizer: OpenCodeEventNormalizer,
+    stderr: &str,
+) -> HarnessRunResult {
     HarnessRunResult {
         success: status.success(),
         session_id: normalizer.session_id,
@@ -170,8 +175,29 @@ fn opencode_result(status: ExitStatus, normalizer: OpenCodeEventNormalizer) -> H
         failure_reason: if status.success() {
             None
         } else {
-            Some("OpenCode process exited unsuccessfully".to_owned())
+            Some(opencode_failure_reason(stderr))
         },
+    }
+}
+
+fn opencode_failure_reason(stderr: &str) -> String {
+    let stderr = stderr.trim();
+    if stderr.is_empty() {
+        return "OpenCode process exited unsuccessfully".to_owned();
+    }
+
+    let mut excerpt = String::new();
+    for character in stderr.chars() {
+        if excerpt.len() + character.len_utf8() > MAX_FAILURE_REASON_BYTES {
+            break;
+        }
+        excerpt.push(character);
+    }
+
+    if excerpt.len() < stderr.len() {
+        format!("OpenCode process exited unsuccessfully: {excerpt}...")
+    } else {
+        format!("OpenCode process exited unsuccessfully: {excerpt}")
     }
 }
 
@@ -585,5 +611,34 @@ mod tests {
             "error: session not found: ses_old\n"
         ));
         assert!(!is_missing_session_error("Error: model not found\n"));
+    }
+
+    #[test]
+    fn includes_stderr_in_failed_opencode_result() {
+        let result = opencode_result(
+            exit_status(7),
+            OpenCodeEventNormalizer::new(context(), RawEventRetention::Disabled),
+            "Error: model not found\n",
+        );
+
+        assert_eq!(result.exit_code, Some(7));
+        assert_eq!(
+            result.failure_reason.as_deref(),
+            Some("OpenCode process exited unsuccessfully: Error: model not found")
+        );
+    }
+
+    #[cfg(unix)]
+    fn exit_status(code: i32) -> std::process::ExitStatus {
+        use std::os::unix::process::ExitStatusExt as _;
+
+        std::process::ExitStatus::from_raw(code << 8)
+    }
+
+    #[cfg(windows)]
+    fn exit_status(code: u32) -> std::process::ExitStatus {
+        use std::os::windows::process::ExitStatusExt as _;
+
+        std::process::ExitStatus::from_raw(code)
     }
 }

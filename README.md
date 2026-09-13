@@ -12,10 +12,12 @@ The v0.1 baseline centers on:
 
 - `svdo-meter run`
 - `svdo-meter eval run`
+- `svdo-meter compare`
 - `svdo-meter telemetry`
 - the `codex`, `claude`, and `opencode` harnesses
 - local per-run JSONL telemetry under `.svdo/meter/`
 - repository alignment eval definitions under `.svdo/evals/`
+- comparison reports that combine telemetry with JSON artifacts under `.svdo/runs/` and `.svdo/evals/`
 - optional live stdout NDJSON event streaming from `svdo-meter run`
 - rebuildable session association from `session.discovered` events
 - fixture-based tests that do not require live Codex execution
@@ -29,6 +31,7 @@ svdo-meter --help
 svdo-meter run --help
 svdo-meter eval --help
 svdo-meter eval run --help
+svdo-meter compare --help
 svdo-meter report --help
 svdo-meter telemetry --help
 ```
@@ -40,6 +43,7 @@ cargo run -p svdo-meter -- --help
 cargo run -p svdo-meter -- run --help
 cargo run -p svdo-meter -- eval --help
 cargo run -p svdo-meter -- eval run --help
+cargo run -p svdo-meter -- compare --help
 cargo run -p svdo-meter -- report --help
 cargo run -p svdo-meter -- telemetry --help
 ```
@@ -85,6 +89,7 @@ svdo-meter run \
   "Implement the password reset flow described in ENG-142"
 
 svdo-meter report ENG-142 --workspace ~/code/app
+svdo-meter compare ENG-142 --workspace ~/code/app
 ```
 
 SVDO Meter writes append-only telemetry to:
@@ -121,6 +126,25 @@ Tokens
   Total   194,213
 ```
 
+`svdo-meter compare` finds runs for the same ticket/work id and compares them by harness and/or model:
+
+```text
+SVDO Comparison — ENG-142
+────────────────────────────────────────────────────────
+
+         Claude  Codex   OpenCode
+Harness  Claude  Codex   OpenCode
+Model    sonnet  gpt-5   gpt-5
+Runs     3       3       3
+
+Performance
+  Success rate  100%    100%    67%
+  Agent time    10m 42s 12m 18s 16m 05s
+  Turns         14      18      25
+  Commands      14      17      —
+  Tool calls    27      31      42
+```
+
 ## Compile
 
 Prerequisites:
@@ -143,6 +167,7 @@ Run it from the build output:
 ./target/debug/svdo-meter --help
 ./target/debug/svdo-meter run --help
 ./target/debug/svdo-meter eval run --help
+./target/debug/svdo-meter compare --help
 ./target/debug/svdo-meter report --help
 ./target/debug/svdo-meter telemetry --help
 ```
@@ -316,6 +341,48 @@ svdo-meter report ENG-142 --pricing-file pricing.json
 
 When telemetry references a model that is not present in the pricing JSON, the report marks that model's cost as unavailable instead of using a default price.
 
+## Compare Runs
+
+`svdo-meter compare` compares existing telemetry and eval results across runs. Give it a ticket/work id for a focused comparison:
+
+```bash
+svdo-meter compare ENG-142 --workspace ~/code/app
+```
+
+Compare recent aggregate performance by harness:
+
+```bash
+svdo-meter compare \
+  --harness codex \
+  --harness claude \
+  --harness opencode \
+  --since 30d
+```
+
+Compare models within a harness:
+
+```bash
+svdo-meter compare \
+  --harness opencode \
+  --model openai/gpt-5.6 \
+  --model anthropic/claude-sonnet-5
+```
+
+Compare harnesses for one model:
+
+```bash
+svdo-meter compare \
+  --model gpt-5.6 \
+  --harness codex \
+  --harness opencode
+```
+
+The comparison report derives canonical run-summary style records from `.svdo/meter/*.jsonl`, then enriches matching runs from JSON artifacts under `.svdo/runs/` and `.svdo/evals/` when those files are present. It reports performance, cost, quality, and efficiency metrics. Missing observability is shown as `—`; true observed zeroes remain visible as `0`.
+
+## Examples
+
+Full runnable examples live in [docs/examples.md](docs/examples.md), including the calculator benchmark that compares Codex `gpt-5.5` with OpenCode `codex/gpt-5.5` through `run`, `eval run`, `report`, and `compare`.
+
 ## Apply SVDO Meter To A Repository
 
 SVDO Meter fits best as a lightweight operating layer for AI-assisted repository work:
@@ -338,6 +405,7 @@ svdo-meter run \
 
 svdo-meter eval run repo-alignment
 svdo-meter report ENG-142
+svdo-meter compare ENG-142
 ```
 
 Use pre-commit hooks only for fast deterministic evals such as formatting, linting, schema checks, or quick unit tests. Run broader deterministic evals in CI on pull requests. Treat LLM judge checks as advisory at first, then make them blocking only after the standards and scoring behavior are stable enough for the team.
@@ -350,6 +418,8 @@ Repositories can define reusable alignment evals and standards under `.svdo/`:
 
 ```text
 .svdo/
+  meter/
+  runs/
   evals/
   standards/
 ```
@@ -387,6 +457,7 @@ Run judge checks with an LLM judge:
 svdo-meter eval run --harness codex --model gpt-5
 svdo-meter eval run api-contract --harness codex --model gpt-5
 svdo-meter eval run --harness claude --model sonnet
+svdo-meter eval run api-contract --harness opencode
 ```
 
 Command checks run locally in the selected workspace. Judge checks are skipped unless `--harness codex`, `--harness claude`, or `--judge-command` is configured. The Codex and Claude judge paths invoke the selected CLI with the selected model and ask for a JSON score. Custom judge commands receive the request JSON path as their final argument, also available as `SVDO_METER_JUDGE_REQUEST`, and must print JSON containing a `score` from `0.0` to `1.0` plus optional `passed`, `violations`, usage, model, harness, and session metadata.
