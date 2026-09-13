@@ -35,6 +35,7 @@ pub struct HarnessRunRequest {
     pub context: EventContext,
     pub prompt: String,
     pub session_id: Option<SessionId>,
+    pub session_auto_selected: bool,
     pub model: Option<ModelName>,
     pub raw_event_retention: RawEventRetention,
     pub execution_permission: ExecutionPermissionMode,
