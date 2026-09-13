@@ -2,9 +2,9 @@
 //!
 //! Add new provider or version coverage by placing captured JSONL under
 //! `tests/fixtures/<provider>/`, then adding a `ConformanceCase` below with:
-//! provider, version label, fixture path, expected canonical event summaries,
-//! final metrics, and final session/model state. These tests never launch a
-//! provider CLI; they exercise only normalization into the canonical
+//! provider metadata, version label, fixture path, expected canonical event
+//! summaries, final metrics, and final session/model state. These tests never
+//! launch a provider CLI; they exercise only normalization into the canonical
 //! `meter_core::MeterEvent` schema.
 
 use chrono::NaiveDate;
@@ -65,8 +65,8 @@ struct ConformanceCase {
     version: &'static str,
     fixture_path: &'static str,
     fixture: &'static str,
-    metadata_path: Option<&'static str>,
-    metadata: Option<&'static str>,
+    metadata_path: &'static str,
+    metadata: &'static str,
     harness: HarnessKind,
     expected_events: Vec<ExpectedEvent>,
     expected_metrics: RunMetrics,
@@ -166,17 +166,7 @@ fn assert_case(case: ConformanceCase) {
 
 fn assert_fixture_metadata(case: &ConformanceCase) {
     let id = case_id(case);
-    if case.provider != "codex" && case.metadata.is_none() {
-        return;
-    }
-
-    let metadata_path = case
-        .metadata_path
-        .unwrap_or_else(|| panic!("{id}: missing fixture metadata path"));
-    let metadata = case
-        .metadata
-        .unwrap_or_else(|| panic!("{id}: missing fixture metadata at {metadata_path}"));
-    let metadata = parse_fixture_metadata(metadata, metadata_path)
+    let metadata = parse_fixture_metadata(case.metadata, case.metadata_path)
         .unwrap_or_else(|error| panic!("{id}: {error}"));
 
     assert_eq!(
@@ -391,10 +381,8 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "gpt-5/captured-current",
             fixture_path: "tests/fixtures/codex/successful_run.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/successful_run.jsonl"),
-            metadata_path: Some("tests/fixtures/codex/successful_run.metadata.yaml"),
-            metadata: Some(include_str!(
-                "../../../tests/fixtures/codex/successful_run.metadata.yaml"
-            )),
+            metadata_path: "tests/fixtures/codex/successful_run.metadata.yaml",
+            metadata: include_str!("../../../tests/fixtures/codex/successful_run.metadata.yaml"),
             harness: HarnessKind::Codex,
             expected_events: vec![
                 event(
@@ -498,10 +486,8 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/failed_run.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/failed_run.jsonl"),
-            metadata_path: Some("tests/fixtures/codex/failed_run.metadata.yaml"),
-            metadata: Some(include_str!(
-                "../../../tests/fixtures/codex/failed_run.metadata.yaml"
-            )),
+            metadata_path: "tests/fixtures/codex/failed_run.metadata.yaml",
+            metadata: include_str!("../../../tests/fixtures/codex/failed_run.metadata.yaml"),
             harness: HarnessKind::Codex,
             expected_events: vec![
                 event(
@@ -551,10 +537,8 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/resumed_session.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/resumed_session.jsonl"),
-            metadata_path: Some("tests/fixtures/codex/resumed_session.metadata.yaml"),
-            metadata: Some(include_str!(
-                "../../../tests/fixtures/codex/resumed_session.metadata.yaml"
-            )),
+            metadata_path: "tests/fixtures/codex/resumed_session.metadata.yaml",
+            metadata: include_str!("../../../tests/fixtures/codex/resumed_session.metadata.yaml"),
             harness: HarnessKind::Codex,
             expected_events: vec![
                 event(
@@ -592,10 +576,8 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/interrupted_run.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/interrupted_run.jsonl"),
-            metadata_path: Some("tests/fixtures/codex/interrupted_run.metadata.yaml"),
-            metadata: Some(include_str!(
-                "../../../tests/fixtures/codex/interrupted_run.metadata.yaml"
-            )),
+            metadata_path: "tests/fixtures/codex/interrupted_run.metadata.yaml",
+            metadata: include_str!("../../../tests/fixtures/codex/interrupted_run.metadata.yaml"),
             harness: HarnessKind::Codex,
             expected_events: vec![event(
                 "session.discovered",
@@ -617,10 +599,8 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/malformed_event.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/malformed_event.jsonl"),
-            metadata_path: Some("tests/fixtures/codex/malformed_event.metadata.yaml"),
-            metadata: Some(include_str!(
-                "../../../tests/fixtures/codex/malformed_event.metadata.yaml"
-            )),
+            metadata_path: "tests/fixtures/codex/malformed_event.metadata.yaml",
+            metadata: include_str!("../../../tests/fixtures/codex/malformed_event.metadata.yaml"),
             harness: HarnessKind::Codex,
             expected_events: vec![event(
                 "session.discovered",
@@ -642,10 +622,10 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/missing_token_usage.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/missing_token_usage.jsonl"),
-            metadata_path: Some("tests/fixtures/codex/missing_token_usage.metadata.yaml"),
-            metadata: Some(include_str!(
+            metadata_path: "tests/fixtures/codex/missing_token_usage.metadata.yaml",
+            metadata: include_str!(
                 "../../../tests/fixtures/codex/missing_token_usage.metadata.yaml"
-            )),
+            ),
             harness: HarnessKind::Codex,
             expected_events: Vec::new(),
             expected_metrics: RunMetrics {
@@ -663,10 +643,8 @@ fn codex_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/codex/unknown_event.jsonl",
             fixture: include_str!("../../../tests/fixtures/codex/unknown_event.jsonl"),
-            metadata_path: Some("tests/fixtures/codex/unknown_event.metadata.yaml"),
-            metadata: Some(include_str!(
-                "../../../tests/fixtures/codex/unknown_event.metadata.yaml"
-            )),
+            metadata_path: "tests/fixtures/codex/unknown_event.metadata.yaml",
+            metadata: include_str!("../../../tests/fixtures/codex/unknown_event.metadata.yaml"),
             harness: HarnessKind::Codex,
             expected_events: Vec::new(),
             expected_metrics: RunMetrics {
@@ -687,8 +665,8 @@ fn claude_cases() -> Vec<ConformanceCase> {
             version: "claude-sonnet-5/captured-current",
             fixture_path: "tests/fixtures/claude/successful_run.jsonl",
             fixture: include_str!("../../../tests/fixtures/claude/successful_run.jsonl"),
-            metadata_path: None,
-            metadata: None,
+            metadata_path: "tests/fixtures/claude/successful_run.metadata.yaml",
+            metadata: include_str!("../../../tests/fixtures/claude/successful_run.metadata.yaml"),
             harness: HarnessKind::Claude,
             expected_events: vec![
                 event(
@@ -759,8 +737,8 @@ fn claude_cases() -> Vec<ConformanceCase> {
             version: "claude-sonnet-5/captured-current",
             fixture_path: "tests/fixtures/claude/failed_run.jsonl",
             fixture: include_str!("../../../tests/fixtures/claude/failed_run.jsonl"),
-            metadata_path: None,
-            metadata: None,
+            metadata_path: "tests/fixtures/claude/failed_run.metadata.yaml",
+            metadata: include_str!("../../../tests/fixtures/claude/failed_run.metadata.yaml"),
             harness: HarnessKind::Claude,
             expected_events: vec![event(
                 "session.discovered",
@@ -783,8 +761,8 @@ fn claude_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/claude/unknown_event.jsonl",
             fixture: include_str!("../../../tests/fixtures/claude/unknown_event.jsonl"),
-            metadata_path: None,
-            metadata: None,
+            metadata_path: "tests/fixtures/claude/unknown_event.metadata.yaml",
+            metadata: include_str!("../../../tests/fixtures/claude/unknown_event.metadata.yaml"),
             harness: HarnessKind::Claude,
             expected_events: Vec::new(),
             expected_metrics: RunMetrics {
@@ -805,8 +783,8 @@ fn opencode_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/opencode/successful_run.jsonl",
             fixture: include_str!("../../../tests/fixtures/opencode/successful_run.jsonl"),
-            metadata_path: None,
-            metadata: None,
+            metadata_path: "tests/fixtures/opencode/successful_run.metadata.yaml",
+            metadata: include_str!("../../../tests/fixtures/opencode/successful_run.metadata.yaml"),
             harness: HarnessKind::OpenCode,
             expected_events: vec![
                 event(
@@ -869,8 +847,8 @@ fn opencode_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/opencode/unknown_event.jsonl",
             fixture: include_str!("../../../tests/fixtures/opencode/unknown_event.jsonl"),
-            metadata_path: None,
-            metadata: None,
+            metadata_path: "tests/fixtures/opencode/unknown_event.metadata.yaml",
+            metadata: include_str!("../../../tests/fixtures/opencode/unknown_event.metadata.yaml"),
             harness: HarnessKind::OpenCode,
             expected_events: vec![event(
                 "session.discovered",
@@ -891,8 +869,10 @@ fn opencode_cases() -> Vec<ConformanceCase> {
             version: "captured-current",
             fixture_path: "tests/fixtures/opencode/malformed_event.jsonl",
             fixture: include_str!("../../../tests/fixtures/opencode/malformed_event.jsonl"),
-            metadata_path: None,
-            metadata: None,
+            metadata_path: "tests/fixtures/opencode/malformed_event.metadata.yaml",
+            metadata: include_str!(
+                "../../../tests/fixtures/opencode/malformed_event.metadata.yaml"
+            ),
             harness: HarnessKind::OpenCode,
             expected_events: vec![event(
                 "session.discovered",
