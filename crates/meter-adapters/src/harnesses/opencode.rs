@@ -12,6 +12,7 @@ use meter_engine::{
     HarnessRunResult,
 };
 use serde_json::Value;
+use std::process::ExitStatus;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
@@ -57,31 +58,61 @@ impl HarnessAdapter for OpenCodeAdapter {
     ) -> Result<HarnessRunResult, HarnessError> {
         reject_unsupported_options(&request)?;
 
+        let first = self
+            .run_once(request.clone(), request.session_id.clone(), events.clone())
+            .await?;
+        if first.result.success
+            || !request.session_auto_selected
+            || request.session_id.is_none()
+            || !is_missing_session_error(&first.stderr)
+        {
+            return Ok(first.result);
+        }
+
+        eprintln!("OpenCode session not found; starting a fresh session.");
+        self.run_once(request, None, events)
+            .await
+            .map(|attempt| attempt.result)
+    }
+}
+
+impl OpenCodeAdapter {
+    async fn run_once(
+        &self,
+        request: HarnessRunRequest,
+        session_id: Option<SessionId>,
+        events: EventSender,
+    ) -> Result<OpenCodeAttemptResult, HarnessError> {
+        let context = request.context.with_session(session_id.clone());
         let mut command = Command::new(&self.config.binary);
         command.args(opencode_argv(
             request.context.workspace.as_deref(),
             request.model.as_ref(),
-            request.session_id.as_ref(),
+            session_id.as_ref(),
             request.execution_permission,
             self.config.agent.as_deref(),
             &request.prompt,
         ));
+        if let Some(workspace) = &request.context.workspace {
+            command.current_dir(workspace);
+        }
         command.stdout(std::process::Stdio::piped());
         command.stderr(std::process::Stdio::piped());
 
         let mut child = command.spawn().map_err(HarnessError::Spawn)?;
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
-        let mut normalizer =
-            OpenCodeEventNormalizer::new(request.context, request.raw_event_retention);
+        let mut normalizer = OpenCodeEventNormalizer::new(context, request.raw_event_retention);
 
         let stderr_task = stderr.map(|stderr| {
             tokio::spawn(async move {
                 let mut lines = BufReader::new(stderr).lines();
+                let mut collected = String::new();
                 while let Some(line) = lines.next_line().await? {
                     eprintln!("{line}");
+                    collect_stderr_line(&mut collected, &line);
                 }
-                Ok::<(), std::io::Error>(())
+                Ok::<_, std::io::Error>(collected)
             })
         });
 
@@ -107,26 +138,66 @@ impl HarnessAdapter for OpenCodeAdapter {
             }
         }
 
-        if let Some(task) = stderr_task {
+        let stderr = if let Some(task) = stderr_task {
             task.await
                 .map_err(|_| HarnessError::Interrupted)?
-                .map_err(HarnessError::Io)?;
-        }
+                .map_err(HarnessError::Io)?
+        } else {
+            String::new()
+        };
         let status = child.wait().await.map_err(HarnessError::Io)?;
 
-        Ok(HarnessRunResult {
-            success: status.success(),
-            session_id: normalizer.session_id,
-            resolved_model: normalizer.resolved_model,
-            metrics: normalizer.metrics,
-            exit_code: status.code(),
-            failure_reason: if status.success() {
-                None
-            } else {
-                Some("OpenCode process exited unsuccessfully".to_owned())
-            },
+        Ok(OpenCodeAttemptResult {
+            stderr,
+            result: opencode_result(status, normalizer),
         })
     }
+}
+
+#[derive(Debug)]
+struct OpenCodeAttemptResult {
+    result: HarnessRunResult,
+    stderr: String,
+}
+
+fn opencode_result(status: ExitStatus, normalizer: OpenCodeEventNormalizer) -> HarnessRunResult {
+    HarnessRunResult {
+        success: status.success(),
+        session_id: normalizer.session_id,
+        resolved_model: normalizer.resolved_model,
+        metrics: normalizer.metrics,
+        exit_code: status.code(),
+        failure_reason: if status.success() {
+            None
+        } else {
+            Some("OpenCode process exited unsuccessfully".to_owned())
+        },
+    }
+}
+
+fn is_missing_session_error(stderr: &str) -> bool {
+    stderr
+        .lines()
+        .any(|line| line.to_ascii_lowercase().contains("session not found"))
+}
+
+fn collect_stderr_line(collected: &mut String, line: &str) {
+    if collected.len() >= MAX_PROVIDER_LINE_BYTES {
+        return;
+    }
+    let remaining = MAX_PROVIDER_LINE_BYTES
+        .saturating_sub(collected.len())
+        .saturating_sub(1);
+    if remaining == 0 {
+        return;
+    }
+    for character in line.chars() {
+        if collected.len() + character.len_utf8() > MAX_PROVIDER_LINE_BYTES - 1 {
+            break;
+        }
+        collected.push(character);
+    }
+    collected.push('\n');
 }
 
 pub fn opencode_argv(
@@ -505,5 +576,14 @@ mod tests {
                 .map(|model| model.as_str()),
             Some("github-copilot/gpt-5")
         );
+    }
+
+    #[test]
+    fn recognizes_missing_session_stderr_for_retry() {
+        assert!(is_missing_session_error("Error: Session not found\n"));
+        assert!(is_missing_session_error(
+            "error: session not found: ses_old\n"
+        ));
+        assert!(!is_missing_session_error("Error: model not found\n"));
     }
 }

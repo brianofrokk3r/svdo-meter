@@ -32,7 +32,10 @@ fn help_succeeds_for_documented_command_paths() {
         &["run", "--help"],
         "svdo-meter run --ticket ENG-142 --harness opencode --model github-copilot/gpt-5 --opencode-agent build PROMPT",
     );
-    assert_success_contains(&["eval", "run", "--help"], "codex, claude, gemini");
+    assert_success_contains(
+        &["eval", "run", "--help"],
+        "codex, claude, opencode, gemini",
+    );
 }
 
 #[test]
@@ -378,6 +381,59 @@ printf '{"type":"assistant","message":{"model":"sonnet","content":[{"type":"text
 }
 
 #[test]
+fn eval_opencode_judge_harness_scores_judge_checks() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-eval-opencode-judge-integration");
+    write_eval_definition(
+        &workspace,
+        "opencode-judge.yaml",
+        r#"
+id: opencode-judge
+task: Review architecture.
+checks:
+  - id: architecture
+    type: judge
+    standard: architecture
+    required: true
+    weight: 1.0
+threshold: 1.0
+"#,
+    )?;
+    write_standard(
+        &workspace,
+        "architecture.md",
+        "Prefer direct process execution.",
+    )?;
+    let bin_dir = workspace.join("bin");
+    let opencode = install_opencode_fixture(&bin_dir)?;
+
+    let output = run_svdo_meter_with_path(
+        &[
+            "eval",
+            "run",
+            "opencode-judge",
+            "--workspace",
+            path_str(&workspace)?,
+            "--harness",
+            "opencode",
+            "--model",
+            "github-copilot/gpt-5",
+            "--format",
+            "json",
+        ],
+        opencode
+            .parent()
+            .ok_or_else(|| std::io::Error::other("missing bin dir"))?,
+    );
+
+    assert!(output.status.success());
+    assert_stdout_contains(&output, "\"outcome\": \"passed\"");
+    assert_stdout_contains(&output, "\"model\": \"github-copilot/gpt-5\"");
+    assert_stdout_contains(&output, "\"harness\": \"opencode\"");
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
 fn eval_fails_when_required_judge_rejects_work() -> std::io::Result<()> {
     let workspace = unique_temp_path("svdo-meter-eval-judge-fail-integration");
     write_eval_definition(
@@ -529,14 +585,7 @@ fn opencode_run_invokes_non_interactive_cli_with_expected_arguments() -> std::io
     let bin_dir = workspace.join("bin");
     let capture = workspace.join("opencode-argv.txt");
     fs::create_dir_all(&workspace)?;
-    write_executable(
-        &bin_dir,
-        "opencode",
-        r#"#!/bin/sh
-printf '%s\n' "$@" > "$OPENCODE_CAPTURE"
-printf '{"type":"step_start","sessionID":"ses_opencode_discovered"}\n'
-"#,
-    )?;
+    install_opencode_fixture(&bin_dir)?;
 
     let output = run_svdo_meter_with_path_and_env(
         &[
@@ -594,14 +643,7 @@ fn opencode_run_resumes_explicit_session_and_discovers_json_session() -> std::io
     let bin_dir = workspace.join("bin");
     let capture = workspace.join("opencode-argv.txt");
     fs::create_dir_all(&workspace)?;
-    write_executable(
-        &bin_dir,
-        "opencode",
-        r#"#!/bin/sh
-printf '%s\n' "$@" > "$OPENCODE_CAPTURE"
-printf '{"type":"step_start","sessionID":"ses_fixture","model":"github-copilot/gpt-5"}\n'
-"#,
-    )?;
+    install_opencode_fixture(&bin_dir)?;
 
     let output = run_svdo_meter_with_path_and_env(
         &[
@@ -646,6 +688,62 @@ printf '{"type":"step_start","sessionID":"ses_fixture","model":"github-copilot/g
     assert!(telemetry.contains("\"harness\":\"opencode\""));
     assert!(telemetry.contains("\"session_id\":\"ses_fixture\""));
     assert!(telemetry.contains("\"source\":\"user_override\""));
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn opencode_auto_resume_retries_fresh_when_stored_session_is_missing() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-opencode-stale-session-integration");
+    let bin_dir = workspace.join("bin");
+    let capture = workspace.join("opencode-argv.txt");
+    fs::create_dir_all(&workspace)?;
+    write_workspace_telemetry_streams(
+        &workspace,
+        &format!(
+            r#"{{"schema_version":1,"event_id":"018f6f1b-97f1-7c04-9a96-eeeeeeeeeeee","event_type":"session.discovered","occurred_at":"2026-08-21T12:00:02Z","observed_at":"2026-08-21T12:00:02Z","run_id":"018f6f1b-97f1-7c04-9a96-333333333333","ticket_id":"ENG-OPENCODE-STALE","harness":"opencode","session_id":"ses_stale","workspace":{},"payload":{{"type":"session_discovered","data":{{"source":"opencode"}}}}}}"#,
+            serde_json::to_string(path_str(&workspace)?)
+                .unwrap_or_else(|error| panic!("failed to serialize workspace path: {error}"))
+        ),
+    )?;
+    install_opencode_fixture(&bin_dir)?;
+
+    let output = run_svdo_meter_with_path_and_env(
+        &[
+            "run",
+            "--ticket",
+            "ENG-OPENCODE-STALE",
+            "--harness",
+            "opencode",
+            "--workspace",
+            path_str(&workspace)?,
+            "Continue ENG-OPENCODE-STALE",
+        ],
+        &bin_dir,
+        &[
+            ("OPENCODE_CAPTURE", path_str(&capture)?),
+            ("OPENCODE_CAPTURE_MODE", "attempts"),
+        ],
+    );
+
+    assert!(output.status.success());
+    assert_output_contains(
+        &output,
+        "OpenCode session not found; starting a fresh session.",
+    );
+    let args = fs::read_to_string(&capture)?;
+    let attempts = args
+        .split("---\n")
+        .filter(|chunk| !chunk.is_empty())
+        .collect::<Vec<_>>();
+    assert_eq!(attempts.len(), 2);
+    assert!(attempts[0].contains("--session\nses_stale\n"));
+    assert!(!attempts[1].contains("--session\n"));
+    let mut telemetry = String::new();
+    for entry in fs::read_dir(workspace.join(".svdo").join("meter"))? {
+        telemetry.push_str(&fs::read_to_string(entry?.path())?);
+    }
+    assert!(telemetry.contains("\"session_id\":\"ses_fresh\""));
     fs::remove_dir_all(workspace)?;
     Ok(())
 }
@@ -859,6 +957,21 @@ fn write_executable(workspace: &Path, file_name: &str, contents: &str) -> std::i
     fs::create_dir_all(workspace)?;
     let path = workspace.join(file_name);
     fs::write(&path, contents)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let mut permissions = fs::metadata(&path)?.permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions)?;
+    }
+    Ok(path)
+}
+
+fn install_opencode_fixture(bin_dir: &Path) -> std::io::Result<PathBuf> {
+    fs::create_dir_all(bin_dir)?;
+    let path = bin_dir.join("opencode");
+    fs::copy(env!("CARGO_BIN_EXE_svdo-meter-opencode-fixture"), &path)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
