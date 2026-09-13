@@ -13,7 +13,7 @@ svdo-meter run -> svdo-meter eval run -> svdo-meter report -> svdo-meter compare
 It compares Codex and OpenCode on the same prompt and eval:
 
 - Codex model: `gpt-5.5`
-- OpenCode model: `codex/gpt-5.5`
+- OpenCode model: `openai/gpt-5.5`
 - Prompt: `examples/calculator/TASK.md`
 - Eval: `examples/calculator/.svdo/evals/calc-implementation.yaml`
 
@@ -45,7 +45,7 @@ Additional knobs are available for model or agent experiments:
 
 ```bash
 SVDO_BENCH_CODEX_MODEL=gpt-5.5 \
-SVDO_BENCH_OPENCODE_MODEL=codex/gpt-5.5 \
+SVDO_BENCH_OPENCODE_MODEL=openai/gpt-5.5 \
 SVDO_BENCH_OPENCODE_AGENT=build \
 ./examples/calculator/benchmark-gpt55-codex-vs-opencode.sh
 ```

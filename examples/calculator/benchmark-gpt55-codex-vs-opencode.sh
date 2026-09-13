@@ -10,7 +10,7 @@ WORK="${SVDO_BENCH_WORK:-CALC-GPT55-$(date +%Y%m%d-%H%M%S)}"
 WORKSPACE="${SVDO_BENCH_WORKSPACE:-$(mktemp -d -t svdo-calc-gpt55.XXXXXX)}"
 
 CODEX_MODEL="${SVDO_BENCH_CODEX_MODEL:-gpt-5.5}"
-OPENCODE_MODEL="${SVDO_BENCH_OPENCODE_MODEL:-codex/gpt-5.5}"
+OPENCODE_MODEL="${SVDO_BENCH_OPENCODE_MODEL:-openai/gpt-5.5}"
 OPENCODE_AGENT="${SVDO_BENCH_OPENCODE_AGENT:-build}"
 
 status=0
@@ -111,7 +111,7 @@ EOF
 reset_task_output
 run_step "$SVDO_METER_BIN" run \
   --ticket "$WORK" \
-  --label "calculator codex gpt-5.5" \
+  --label "calculator codex $CODEX_MODEL" \
   --harness codex \
   --workspace "$WORKSPACE" \
   --model "$CODEX_MODEL" \
@@ -131,7 +131,7 @@ write_compare_artifact \
 reset_task_output
 run_step "$SVDO_METER_BIN" run \
   --ticket "$WORK" \
-  --label "calculator opencode codex/gpt-5.5" \
+  --label "calculator opencode $OPENCODE_MODEL" \
   --harness opencode \
   --workspace "$WORKSPACE" \
   --model "$OPENCODE_MODEL" \
