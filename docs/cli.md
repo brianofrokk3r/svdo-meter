@@ -7,6 +7,7 @@ SVDO Meter currently exposes these functional commands:
 ```text
 svdo-meter run
 svdo-meter eval run
+svdo-meter compare
 svdo-meter report
 svdo-meter telemetry
 ```
@@ -18,6 +19,7 @@ svdo-meter --help
 svdo-meter run --help
 svdo-meter eval --help
 svdo-meter eval run --help
+svdo-meter compare --help
 svdo-meter report --help
 svdo-meter telemetry --help
 svdo-meter telemetry sessions --help
@@ -32,6 +34,7 @@ cargo run -p svdo-meter -- --help
 cargo run -p svdo-meter -- run --help
 cargo run -p svdo-meter -- eval --help
 cargo run -p svdo-meter -- eval run --help
+cargo run -p svdo-meter -- compare --help
 cargo run -p svdo-meter -- report --help
 cargo run -p svdo-meter -- telemetry --help
 ```
@@ -51,12 +54,14 @@ svdo-meter run \
   "Implement the password reset flow described in ENG-142"
 
 svdo-meter report ENG-142 --workspace ~/code/app
+svdo-meter compare ENG-142 --workspace ~/code/app
 ```
 
 Expected result at a high level:
 
 - telemetry is appended under `~/code/app/.svdo/meter/<run-id>.jsonl`
 - `svdo-meter report` renders a local SVDO Trace grouped by work id
+- `svdo-meter compare` compares matching runs by harness and/or model
 - future runs for the same ticket, harness, and workspace can reuse discovered sessions when available
 
 Example terminal report output:
@@ -380,6 +385,94 @@ Each eval result includes:
 - Session ID, when available
 
 Terminal output is intended for humans and highlights pass/fail status, score, failed checks, and violations. JSON output includes the full structured result model. CSV output is pipe-friendly and emits one row per check with repeated eval-level fields.
+
+## `svdo-meter compare`
+
+Compares existing telemetry and eval/run artifacts across runs. Use it to compare harnesses or models for one work item, or to summarize recent aggregate behavior across many work items.
+
+Compare all runs for one ticket or work id:
+
+```bash
+svdo-meter compare ENG-142
+svdo-meter compare ENG-142 --workspace ~/code/app
+```
+
+Compare recent runs by harness:
+
+```bash
+svdo-meter compare \
+  --harness codex \
+  --harness claude \
+  --harness opencode \
+  --since 30d
+```
+
+Compare models within one harness:
+
+```bash
+svdo-meter compare \
+  --harness opencode \
+  --model openai/gpt-5.6 \
+  --model anthropic/claude-sonnet-5
+```
+
+Compare harnesses for one model. Model filters match exact model ids and provider-qualified basename aliases, so `gpt-5.6` can match telemetry such as `openai/gpt-5.6`:
+
+```bash
+svdo-meter compare \
+  --model gpt-5.6 \
+  --harness codex \
+  --harness opencode
+```
+
+### Arguments
+
+| Argument | Required | Description |
+|---|---:|---|
+| `<WORK>` | No | Optional ticket or work identifier. When provided, compare matching runs for that work id. When omitted, render an aggregate comparison across matching runs. |
+| `--workspace <PATH>` | No | Workspace containing `.svdo/` artifacts. Defaults to the current directory. |
+| `--harness <HARNESS>` | No | Include only this harness. Repeat to compare multiple harnesses. Supported values follow the CLI harness enum, currently `codex`, `claude`, `opencode`, and `gemini`. |
+| `--model <MODEL>` | No | Include only this model. Repeat to compare multiple models. Filters match exact values and provider-qualified basename aliases. |
+| `--since <DURATION>` | No | Include only runs observed within a recent duration such as `30d`, `12h`, or `45m`. |
+
+### Output
+
+Ticket-specific comparisons render sections for:
+
+- Performance: success rate, agent time, turns, commands, and tool calls
+- Cost: input tokens, output tokens, and estimated cost
+- Quality: eval score, required checks, and violations
+- Efficiency: cost per eval point and time per eval point
+
+Example:
+
+```text
+SVDO Comparison — ENG-142
+────────────────────────────────────────────────────────
+
+         Claude  Codex   OpenCode
+Harness  Claude  Codex   OpenCode
+Model    sonnet  gpt-5   gpt-5
+Runs     3       3       3
+
+Performance
+  Success rate  100%    100%    67%
+  Agent time    10m 42s 12m 18s 16m 05s
+  Turns         14      18      25
+  Commands      14      17      —
+  Tool calls    27      31      42
+```
+
+Aggregate comparisons render median and pass-rate rows such as tasks, pass rate, median eval, median time, median tokens, and median rework.
+
+Comparison data is derived from canonical run-summary style records built from `.svdo/meter/*.jsonl`, then enriched from JSON artifacts under:
+
+```text
+<workspace>/.svdo/runs/
+<workspace>/.svdo/evals/
+```
+
+The artifact enrichment is intentionally optional. If a metric is unavailable, the terminal report renders `—`. An observed zero remains distinct and renders as `0`, so missing observability is not coerced to numeric zero.
 
 ## `svdo-meter report`
 
