@@ -276,6 +276,7 @@ Run judge checks with an LLM judge:
 svdo-meter eval run --harness codex --model gpt-5
 svdo-meter eval run api-contract --harness codex --model gpt-5
 svdo-meter eval run --harness claude --model sonnet
+svdo-meter eval run --harness opencode --model github-copilot/gpt-5
 ```
 
 ### Arguments
@@ -284,7 +285,7 @@ svdo-meter eval run --harness claude --model sonnet
 |---|---:|---|
 | `<EVAL>` | No | Eval id, file stem, or file name. When omitted, all `.yaml` and `.yml` eval definitions under `.svdo/evals/` run. |
 | `--workspace <PATH>` | No | Repository workspace containing `.svdo/evals/`. Defaults to the current directory. |
-| `--harness <HARNESS>` | No | Harness used for `type: judge` checks. Supported values: `codex`, `claude`, `gemini`. |
+| `--harness <HARNESS>` | No | Harness used for `type: judge` checks. Supported values: `codex`, `claude`, `opencode`, `gemini`. |
 | `--model <MODEL>` | No | Model passed to the judge harness, such as `gpt-5`. Requires `--harness`. |
 | `--judge-command <PROGRAM>` | No | Custom program used for `type: judge` checks. Receives the judge request JSON path as its final argument. |
 | `--judge-arg <ARG>` | No | Extra argument passed to `--judge-command` before the judge request path. Repeat for multiple arguments. |
@@ -343,7 +344,7 @@ Command checks report success or failure, exit status, duration, and captured fa
 
 Judge checks are represented in the schema and result model. Without `--harness` or `--judge-command`, judge checks resolve their referenced standards and report a skipped result with a clear reason. Skipped judge checks do not block deterministic command checks from running.
 
-When `--harness codex` is set, each judge check sends the eval task and resolved standard contents to `codex exec --json`, asks the model to return only a JSON score, and reads the JSON score from the Codex output stream. When `--harness claude` is set, the same judge request is sent through `claude -p` with `--output-format stream-json`.
+When `--harness codex` is set, each judge check sends the eval task and resolved standard contents to `codex exec --json`, asks the model to return only a JSON score, and reads the JSON score from the Codex output stream. When `--harness claude` is set, the same judge request is sent through `claude -p` with `--output-format stream-json`. When `--harness opencode` is set, the same judge request is sent through `opencode run --format json`.
 
 `--judge-command` remains available for custom judge integrations. Each judge check writes a temporary request JSON file and invokes the configured program directly:
 

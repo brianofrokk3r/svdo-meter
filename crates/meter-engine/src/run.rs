@@ -97,6 +97,8 @@ impl RunEngine {
                     .await?
             }
         };
+        let session_auto_selected =
+            request.session_override.is_none() && selected_session.is_some();
         let base_context = EventContext {
             run_id,
             ticket_id: request.ticket_id.clone(),
@@ -139,6 +141,7 @@ impl RunEngine {
             context: base_context.clone(),
             prompt: request.prompt,
             session_id: selected_session.clone(),
+            session_auto_selected,
             model: request.model,
             raw_event_retention: request.raw_event_retention,
             execution_permission: request.execution_permission,
@@ -148,12 +151,7 @@ impl RunEngine {
         let elapsed_ms = saturating_elapsed_ms(started);
         let terminal_context = match &harness_result {
             Ok(result) => base_context
-                .with_session(
-                    result
-                        .session_id
-                        .clone()
-                        .or_else(|| selected_session.clone()),
-                )
+                .with_session(result.session_id.clone())
                 .with_resolved_model(result.resolved_model.clone()),
             Err(_) => base_context,
         };

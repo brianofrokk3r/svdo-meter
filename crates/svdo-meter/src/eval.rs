@@ -1,17 +1,23 @@
 use std::ffi::OsStr;
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, ExitStatus, Output, Stdio};
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, bail};
-use meter_adapters::{claude_argv, codex_argv};
-use meter_core::{ClaudeConfig, ClaudeRunOptions, CodexConfig, HarnessKind, ModelName};
+use meter_adapters::{claude_argv, codex_argv, opencode_argv};
+use meter_core::{
+    ClaudeConfig, ClaudeRunOptions, CodexConfig, ExecutionPermissionMode, HarnessKind, ModelName,
+    OpenCodeConfig,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::cli::ReportFormat;
+
+const MAX_JUDGE_OUTPUT_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct EvalDefinition {
@@ -41,6 +47,7 @@ pub struct JudgeConfig {
 enum JudgeRunner {
     Codex(CodexJudge),
     Claude(ClaudeJudge),
+    OpenCode(OpenCodeJudge),
     Command(JudgeCommand),
 }
 
@@ -51,6 +58,11 @@ struct CodexJudge {
 
 #[derive(Debug, Clone)]
 struct ClaudeJudge {
+    model: Option<ModelName>,
+}
+
+#[derive(Debug, Clone)]
+struct OpenCodeJudge {
     model: Option<ModelName>,
 }
 
@@ -69,6 +81,13 @@ struct JudgeExecution {
     command: String,
     harness: &'static str,
     model: Option<String>,
+}
+
+#[derive(Debug)]
+struct StreamedCommandOutput {
+    status: ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
 }
 
 #[derive(Debug, Serialize)]
@@ -217,8 +236,11 @@ impl JudgeConfig {
             HarnessKind::Claude => Ok(Self {
                 runner: Some(JudgeRunner::Claude(ClaudeJudge { model })),
             }),
-            HarnessKind::OpenCode | HarnessKind::Gemini => {
-                bail!("eval judge --harness currently supports codex and claude")
+            HarnessKind::OpenCode => Ok(Self {
+                runner: Some(JudgeRunner::OpenCode(OpenCodeJudge { model })),
+            }),
+            HarnessKind::Gemini => {
+                bail!("eval judge --harness currently supports codex, claude, and opencode")
             }
         }
     }
@@ -665,6 +687,7 @@ impl JudgeRunner {
         match self {
             Self::Codex(judge) => judge.run(request, workspace),
             Self::Claude(judge) => judge.run(request, workspace),
+            Self::OpenCode(judge) => judge.run(request, workspace),
             Self::Command(command) => {
                 let request_path = write_judge_request(request, check_id)?;
                 let output = command.run(&request_path, workspace);
@@ -683,6 +706,97 @@ impl JudgeRunner {
             }
         }
     }
+}
+
+impl OpenCodeJudge {
+    fn run(&self, request: &JudgeRequest<'_>, workspace: &Path) -> anyhow::Result<JudgeExecution> {
+        let request_json =
+            serde_json::to_string_pretty(request).context("failed to serialize judge request")?;
+        let prompt = judge_prompt(&request_json);
+        let config = OpenCodeConfig::default();
+        let args = opencode_argv(
+            Some(workspace),
+            self.model.as_ref(),
+            None,
+            ExecutionPermissionMode::Standard,
+            None,
+            &prompt,
+        );
+        let mut command = Command::new(&config.binary);
+        command.args(&args).current_dir(workspace);
+        let output = run_streamed_command(&mut command)
+            .with_context(|| format!("failed to execute `{}`", config.binary.display()))?;
+        let display = std::iter::once(config.binary.display().to_string())
+            .chain(args.iter().map(|arg| arg.to_string_lossy().into_owned()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        Ok(JudgeExecution {
+            success: output.status.success(),
+            exit_code: output.status.code(),
+            stdout: output.stdout,
+            stderr: output.stderr,
+            command: display,
+            harness: "opencode",
+            model: self.model.as_ref().map(|model| model.as_str().to_owned()),
+        })
+    }
+}
+
+fn run_streamed_command(command: &mut Command) -> anyhow::Result<StreamedCommandOutput> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("failed to capture judge stdout")?;
+    let stderr = child
+        .stderr
+        .take()
+        .context("failed to capture judge stderr")?;
+    let stdout_reader = thread::spawn(move || collect_bounded_output(stdout));
+    let stderr_reader = thread::spawn(move || collect_bounded_output(stderr));
+    let status = child.wait()?;
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("judge stdout reader panicked"))?
+        .context("failed to read judge stdout")?;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| anyhow::anyhow!("judge stderr reader panicked"))?
+        .context("failed to read judge stderr")?;
+    Ok(StreamedCommandOutput {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn collect_bounded_output(mut stream: impl Read) -> std::io::Result<Vec<u8>> {
+    let mut output = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let read = stream.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(output);
+        }
+        append_bounded_tail(&mut output, &buffer[..read], MAX_JUDGE_OUTPUT_BYTES);
+    }
+}
+
+fn append_bounded_tail(output: &mut Vec<u8>, chunk: &[u8], max_bytes: usize) {
+    if chunk.len() >= max_bytes {
+        output.clear();
+        output.extend_from_slice(&chunk[chunk.len() - max_bytes..]);
+        return;
+    }
+    let excess = output
+        .len()
+        .saturating_add(chunk.len())
+        .saturating_sub(max_bytes);
+    if excess > 0 {
+        output.drain(..excess);
+    }
+    output.extend_from_slice(chunk);
 }
 
 impl ClaudeJudge {
@@ -801,17 +915,19 @@ fn judge_response_from_value(value: &Value) -> anyhow::Result<Option<JudgeRespon
             return Ok(Some(response));
         }
     }
-    for key in ["message", "item", "data", "response"] {
+    for key in ["message", "item", "data", "response", "part"] {
         if let Some(nested) = value.get(key)
             && let Some(response) = judge_response_from_value(nested)?
         {
             return Ok(Some(response));
         }
     }
-    if let Some(content) = value.get("content").and_then(Value::as_array) {
-        for item in content {
-            if let Some(response) = judge_response_from_value(item)? {
-                return Ok(Some(response));
+    for key in ["content", "parts"] {
+        if let Some(items) = value.get(key).and_then(Value::as_array) {
+            for item in items {
+                if let Some(response) = judge_response_from_value(item)? {
+                    return Ok(Some(response));
+                }
             }
         }
     }

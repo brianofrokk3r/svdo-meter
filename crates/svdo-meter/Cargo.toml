@@ -8,6 +8,10 @@ license.workspace = true
 name = "svdo-meter"
 path = "src/main.rs"
 
+[[bin]]
+name = "svdo-meter-opencode-fixture"
+path = "tests/fixtures/opencode_fixture.rs"
+
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true

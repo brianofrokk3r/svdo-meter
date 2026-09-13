@@ -50,7 +50,7 @@ pub struct EvalArgs {
 pub enum EvalCommands {
     /// Run one eval by id or file name, or all evals when omitted.
     #[command(
-        after_help = "Examples:\n  svdo-meter eval run\n  svdo-meter eval run add-account-endpoint\n  svdo-meter eval run add-account-endpoint --format json\n  svdo-meter eval run smoke.yaml --format csv\n  svdo-meter eval run --harness codex --model gpt-5\n  svdo-meter eval run --harness claude --model sonnet"
+        after_help = "Examples:\n  svdo-meter eval run\n  svdo-meter eval run add-account-endpoint\n  svdo-meter eval run add-account-endpoint --format json\n  svdo-meter eval run smoke.yaml --format csv\n  svdo-meter eval run --harness codex --model gpt-5\n  svdo-meter eval run --harness claude --model sonnet\n  svdo-meter eval run --harness opencode --model github-copilot/gpt-5"
     )]
     Run(EvalRunArgs),
 }
@@ -65,7 +65,7 @@ pub struct EvalRunArgs {
     #[arg(long)]
     pub workspace: Option<PathBuf>,
 
-    /// Harness used to run judge checks. Supported: codex, claude, gemini.
+    /// Harness used to run judge checks. Supported: codex, claude, opencode, gemini.
     #[arg(long, value_name = "HARNESS", conflicts_with = "judge_command")]
     pub harness: Option<HarnessKind>,
 
@@ -1108,6 +1108,28 @@ mod tests {
     }
 
     #[test]
+    fn parses_eval_run_with_opencode_judge_harness_and_model() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "eval",
+            "run",
+            "--harness",
+            "opencode",
+            "--model",
+            "github-copilot/gpt-5",
+        ])?;
+        let Commands::Eval(args) = cli.command else {
+            panic!("expected eval command");
+        };
+        let EvalCommands::Run(args) = args.command;
+
+        assert_eq!(args.eval, None);
+        assert_eq!(args.harness, Some(HarnessKind::OpenCode));
+        assert_eq!(args.model.as_deref(), Some("github-copilot/gpt-5"));
+        Ok(())
+    }
+
+    #[test]
     fn help_lists_supported_harnesses() {
         let help = Cli::command().render_long_help().to_string();
         let run_help = Cli::command()
@@ -1126,7 +1148,7 @@ mod tests {
         assert!(run_help.contains("codex, claude, opencode, gemini"));
         assert!(run_help.contains("--harness opencode"));
         assert!(run_help.contains("--opencode-agent"));
-        assert!(eval_run_help.contains("codex, claude, gemini"));
+        assert!(eval_run_help.contains("codex, claude, opencode, gemini"));
         assert!(!run_help.contains("litellm"));
         assert!(!eval_run_help.contains("litellm"));
     }
