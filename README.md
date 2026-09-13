@@ -387,6 +387,7 @@ Run judge checks with an LLM judge:
 svdo-meter eval run --harness codex --model gpt-5
 svdo-meter eval run api-contract --harness codex --model gpt-5
 svdo-meter eval run --harness claude --model sonnet
+svdo-meter eval run api-contract --harness opencode
 ```
 
 Command checks run locally in the selected workspace. Judge checks are skipped unless `--harness codex`, `--harness claude`, or `--judge-command` is configured. The Codex and Claude judge paths invoke the selected CLI with the selected model and ask for a JSON score. Custom judge commands receive the request JSON path as their final argument, also available as `SVDO_METER_JUDGE_REQUEST`, and must print JSON containing a `score` from `0.0` to `1.0` plus optional `passed`, `violations`, usage, model, harness, and session metadata.
