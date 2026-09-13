@@ -410,7 +410,7 @@ Raw provider payloads are not persisted by default. This avoids storing prompts,
 
 Provider conformance fixtures live under `tests/fixtures/<provider>/`. Keep the `.jsonl` files as captured or synthetic provider event streams, and record capture context in the matching `.metadata.yaml` sidecar when a fixture is used for provider conformance.
 
-Codex fixture metadata is required to include:
+Provider fixture metadata is required to include:
 
 ```yaml
 provider: codex
@@ -419,7 +419,7 @@ schema_observed: 2026-09-11
 model: gpt-5
 ```
 
-When refreshing fixtures, set `cli_version` from the provider CLI used for capture, for example `codex --version`, and update `schema_observed` to the date the output shape was observed. The conformance tests validate required metadata before replaying fixtures and do not launch live provider CLIs.
+When refreshing fixtures, set `provider` to the harness name, set `cli_version` from the provider CLI used for capture, for example `codex --version` or `opencode --version`, set `schema_observed` to the date the output shape was observed, and record the model used for capture. The conformance tests validate required metadata before replaying fixtures and do not launch live provider CLIs.
 
 Inspect local telemetry without modifying `.svdo/meter/`:
 
