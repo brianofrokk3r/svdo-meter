@@ -1373,10 +1373,11 @@ fn diagnostics_suffix(base: &str, diagnostics: &[ReportDiagnostic]) -> String {
     output
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", content = "value", rename_all = "snake_case")]
 pub enum ComparisonMetric<T> {
     Observed(T),
+    #[default]
     Unavailable,
 }
 
@@ -1426,12 +1427,6 @@ impl<T> ComparisonMetric<T> {
 impl<T> From<Option<T>> for ComparisonMetric<T> {
     fn from(value: Option<T>) -> Self {
         Self::from_option(value)
-    }
-}
-
-impl<T> Default for ComparisonMetric<T> {
-    fn default() -> Self {
-        Self::Unavailable
     }
 }
 
