@@ -2,7 +2,6 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 SVDO_METER_BIN="${SVDO_METER_BIN:-svdo-meter}"
 PROMPT_FILE="${SVDO_BENCH_PROMPT:-$SCRIPT_DIR/TASK.md}"
@@ -74,12 +73,8 @@ reset_task_output() {
 }
 
 if ! command -v "$SVDO_METER_BIN" >/dev/null 2>&1; then
-  if [ -x "$REPO_ROOT/target/debug/svdo-meter" ]; then
-    SVDO_METER_BIN="$REPO_ROOT/target/debug/svdo-meter"
-  else
-    printf 'svdo-meter was not found. Set SVDO_METER_BIN or build/install svdo-meter first.\n' >&2
-    exit 127
-  fi
+  printf 'svdo-meter was not found. Install it globally, add it to PATH, or set SVDO_METER_BIN.\n' >&2
+  exit 127
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
