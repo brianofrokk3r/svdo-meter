@@ -381,7 +381,7 @@ The comparison report derives canonical run-summary style records from `.svdo/me
 
 ## Examples
 
-Full runnable examples live in [docs/examples.md](docs/examples.md), including the calculator benchmark that compares Codex `gpt-5.5` with OpenCode `codex/gpt-5.5` through `run`, `eval run`, `report`, and `compare`.
+Full runnable examples live in [docs/examples.md](docs/examples.md), including the calculator benchmark that compares Codex `gpt-5.5` with OpenCode `openai/gpt-5.5` through `run`, `eval run`, `report`, and `compare`.
 
 ## Apply SVDO Meter To A Repository
 
