@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
-use meter_core::{EventPayload, ExecutionPermissionMode, TokenUsage};
+use meter_core::{EventPayload, ExecutionPermissionMode, RunMetrics, TokenUsage};
 
 use crate::{ReportDiagnostic, TelemetryRecord};
 
@@ -92,6 +92,8 @@ pub struct InspectionRecord {
     pub work: String,
     pub label: Option<String>,
     pub harness: String,
+    pub requested_model: Option<String>,
+    pub resolved_model: Option<String>,
     pub session_id: Option<String>,
     pub payload: EventPayload,
 }
@@ -108,6 +110,8 @@ impl InspectionRecord {
                 .unwrap_or_else(|| UNKNOWN_WORK.to_owned()),
             label: record.label,
             harness: record.harness.to_string(),
+            requested_model: record.requested_model.map(|model| model.to_string()),
+            resolved_model: record.resolved_model.map(|model| model.to_string()),
             session_id: record.session_id.map(|session_id| session_id.to_string()),
             payload: record.payload,
         }
@@ -215,11 +219,23 @@ pub struct RunSummary {
     pub works: Vec<String>,
     pub labels: Vec<String>,
     pub harnesses: Vec<String>,
+    pub requested_models: Vec<String>,
+    pub resolved_models: Vec<String>,
     pub sessions: Vec<String>,
     pub first_event: Option<DateTime<Utc>>,
     pub last_event: Option<DateTime<Utc>>,
     pub records: u64,
+    pub terminal_status: Option<RunTerminalStatus>,
+    pub terminal_exit_code: Option<i32>,
+    pub terminal_metrics: Option<RunMetrics>,
+    pub observed_command_events: u64,
     pub token_warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunTerminalStatus {
+    Completed,
+    Failed,
 }
 
 #[derive(Debug, Default)]
@@ -311,10 +327,16 @@ impl RunSummaryAccumulator {
                 works: Vec::new(),
                 labels: Vec::new(),
                 harnesses: Vec::new(),
+                requested_models: Vec::new(),
+                resolved_models: Vec::new(),
                 sessions: Vec::new(),
                 first_event: None,
                 last_event: None,
                 records: 0,
+                terminal_status: None,
+                terminal_exit_code: None,
+                terminal_metrics: None,
+                observed_command_events: 0,
                 token_warnings: Vec::new(),
             },
         }
@@ -327,6 +349,29 @@ impl RunSummaryAccumulator {
             push_unique(&mut self.summary.labels, label);
         }
         push_unique(&mut self.summary.harnesses, &record.harness);
+        if let Some(model) = &record.requested_model {
+            push_unique(&mut self.summary.requested_models, model);
+        }
+        if let Some(model) = &record.resolved_model {
+            push_unique(&mut self.summary.resolved_models, model);
+        }
+        match &record.payload {
+            EventPayload::CommandStarted(_) => {
+                self.summary.observed_command_events =
+                    self.summary.observed_command_events.saturating_add(1);
+            }
+            EventPayload::RunCompleted(completed) => {
+                self.summary.terminal_status = Some(RunTerminalStatus::Completed);
+                self.summary.terminal_exit_code = completed.exit_code;
+                self.summary.terminal_metrics = Some(completed.metrics.clone());
+            }
+            EventPayload::RunFailed(failed) => {
+                self.summary.terminal_status = Some(RunTerminalStatus::Failed);
+                self.summary.terminal_exit_code = failed.exit_code;
+                self.summary.terminal_metrics = Some(failed.metrics.clone());
+            }
+            _ => {}
+        }
         for session in sessions {
             push_unique(&mut self.summary.sessions, &session);
         }

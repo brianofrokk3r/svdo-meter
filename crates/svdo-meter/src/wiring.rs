@@ -6,8 +6,12 @@ use meter_adapters::{ClaudeAdapter, CodexAdapter, JsonlEventStore, OpenCodeAdapt
 use meter_core::{HarnessConfig, HarnessKind};
 use meter_engine::{NdjsonWriteSink, RunEngine};
 use meter_report::{
-    ReportDiagnostic, ReportQuery, TelemetryInspection, TraceReducer, TraceReport, apply_jsonl_line,
+    ComparableEvalMetrics, ComparableRunSummary, ComparisonDiscoveryQuery,
+    ComparisonDiscoveryReport, ComparisonMetric, ReportDiagnostic, ReportQuery,
+    TelemetryInspection, TraceReducer, TraceReport, apply_jsonl_line,
+    discover_comparable_runs_from_jsonl_lines,
 };
+use serde_json::Value;
 
 use crate::cli::{EmitFormat, RunArgs, RunSink};
 
@@ -80,6 +84,25 @@ pub fn load_report(path: &Path, query: &ReportQuery) -> Result<TraceReport, std:
     Ok(reducer.finish(diagnostics))
 }
 
+pub fn load_comparison_discovery(
+    path: &Path,
+    query: &ComparisonDiscoveryQuery,
+) -> Result<ComparisonDiscoveryReport, std::io::Error> {
+    let mut lines = Vec::new();
+    for telemetry_path in telemetry_paths(path)? {
+        let file = match std::fs::File::open(&telemetry_path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        let reader = std::io::BufReader::new(file);
+        lines.extend(reader.lines().collect::<Result<Vec<_>, _>>()?);
+    }
+    let mut report = discover_comparable_runs_from_jsonl_lines(lines, query);
+    enrich_comparison_from_artifacts(path, &mut report.runs)?;
+    Ok(report)
+}
+
 pub fn load_telemetry_inspection(path: &Path) -> Result<TelemetryInspection, std::io::Error> {
     let mut lines = Vec::new();
     for telemetry_path in telemetry_paths(path)? {
@@ -114,17 +137,235 @@ fn telemetry_paths(path: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
     Ok(stream_paths)
 }
 
+fn enrich_comparison_from_artifacts(
+    telemetry_path: &Path,
+    runs: &mut [ComparableRunSummary],
+) -> Result<(), std::io::Error> {
+    let Some(svdo_dir) = telemetry_path.parent() else {
+        return Ok(());
+    };
+    for artifact_dir in [svdo_dir.join("runs"), svdo_dir.join("evals")] {
+        for path in json_artifact_paths(&artifact_dir)? {
+            let contents = std::fs::read_to_string(path)?;
+            let Ok(value) = serde_json::from_str::<Value>(&contents) else {
+                continue;
+            };
+            apply_comparison_artifact(runs, &value);
+        }
+    }
+    Ok(())
+}
+
+fn json_artifact_paths(path: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
+    let entries = match std::fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            paths.extend(json_artifact_paths(&path)?);
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("json") {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+fn apply_comparison_artifact(runs: &mut [ComparableRunSummary], value: &Value) {
+    if let Some(results) = value.get("results").and_then(Value::as_array) {
+        for result in results {
+            apply_comparison_artifact(runs, result);
+        }
+    }
+
+    let run_id = string_field_any(value, &["run_id", "runId", "run"]);
+    let work = string_field_any(value, &["work", "ticket_id", "ticketId", "ticket"]);
+    let harness = string_field_any(value, &["harness"]);
+    let model = string_field_any(value, &["model", "requested_model", "resolved_model"]);
+
+    for run in runs.iter_mut().filter(|run| {
+        artifact_matches_run(
+            run,
+            run_id.as_deref(),
+            work.as_deref(),
+            harness.as_deref(),
+            model.as_deref(),
+        )
+    }) {
+        if let Some(cost) = cost_value(value) {
+            run.estimated_cost_usd = ComparisonMetric::Observed(cost);
+        }
+        if let Some(rework) = u64_field_any(value, &["rework_count", "rework"]) {
+            run.rework_count = ComparisonMetric::Observed(rework);
+        } else if let Some(rework) = value
+            .pointer("/metrics/rework_count")
+            .and_then(Value::as_u64)
+        {
+            run.rework_count = ComparisonMetric::Observed(rework);
+        }
+        if let Some(eval) = eval_metrics(value) {
+            run.eval = eval;
+        }
+    }
+}
+
+fn artifact_matches_run(
+    run: &ComparableRunSummary,
+    run_id: Option<&str>,
+    work: Option<&str>,
+    harness: Option<&str>,
+    model: Option<&str>,
+) -> bool {
+    if let Some(run_id) = run_id {
+        return run.run_id == run_id;
+    }
+    if let Some(work) = work
+        && !run.works.iter().any(|candidate| candidate == work)
+    {
+        return false;
+    }
+    if let Some(harness) = harness
+        && !run.harnesses.iter().any(|candidate| candidate == harness)
+    {
+        return false;
+    }
+    if let Some(model) = model
+        && !run
+            .requested_models
+            .iter()
+            .chain(&run.resolved_models)
+            .any(|candidate| {
+                candidate == model
+                    || candidate.rsplit('/').next() == Some(model)
+                    || Some(candidate.as_str()) == model.rsplit('/').next()
+            })
+    {
+        return false;
+    }
+    work.is_some() || harness.is_some() || model.is_some()
+}
+
+fn cost_value(value: &Value) -> Option<f64> {
+    f64_field_any(value, &["estimated_cost_usd", "cost_usd", "total_cost_usd"])
+        .or_else(|| value.pointer("/cost/total").and_then(Value::as_f64))
+        .or_else(|| value.pointer("/cost/estimated_usd").and_then(Value::as_f64))
+}
+
+fn eval_metrics(value: &Value) -> Option<ComparableEvalMetrics> {
+    let score = f64_field_any(value, &["overall_score", "eval_score", "score"]);
+    let checks = value.get("checks").and_then(Value::as_array);
+    let required_passed = u64_field_any(value, &["required_checks_passed"])
+        .or_else(|| {
+            value
+                .pointer("/required_checks/passed")
+                .and_then(Value::as_u64)
+        })
+        .or_else(|| checks.map(|checks| required_checks_passed(checks)));
+    let required_total = u64_field_any(value, &["required_checks_total"])
+        .or_else(|| {
+            value
+                .pointer("/required_checks/total")
+                .and_then(Value::as_u64)
+        })
+        .or_else(|| checks.map(|checks| required_checks_total(checks)));
+    let violations = u64_field_any(value, &["violations_count", "violation_count"])
+        .or_else(|| {
+            value
+                .get("violations")
+                .and_then(Value::as_array)
+                .map(|violations| violations.len() as u64)
+        })
+        .or_else(|| checks.map(|checks| check_violations(checks)));
+
+    if score.is_none()
+        && required_passed.is_none()
+        && required_total.is_none()
+        && violations.is_none()
+    {
+        return None;
+    }
+
+    Some(ComparableEvalMetrics {
+        score: ComparisonMetric::from_option(score),
+        required_checks_passed: ComparisonMetric::from_option(required_passed),
+        required_checks_total: ComparisonMetric::from_option(required_total),
+        violations: ComparisonMetric::from_option(violations),
+    })
+}
+
+fn required_checks_total(checks: &[Value]) -> u64 {
+    checks
+        .iter()
+        .filter(|check| {
+            check
+                .get("required")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .count() as u64
+}
+
+fn required_checks_passed(checks: &[Value]) -> u64 {
+    checks
+        .iter()
+        .filter(|check| {
+            check
+                .get("required")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .filter(|check| {
+            check.get("outcome").and_then(Value::as_str) == Some("passed")
+                || check.get("passed").and_then(Value::as_bool) == Some(true)
+        })
+        .count() as u64
+}
+
+fn check_violations(checks: &[Value]) -> u64 {
+    checks
+        .iter()
+        .filter_map(|check| check.get("violations").and_then(Value::as_array))
+        .map(|violations| violations.len() as u64)
+        .sum()
+}
+
+fn string_field_any(value: &Value, fields: &[&str]) -> Option<String> {
+    fields
+        .iter()
+        .find_map(|field| value.get(*field).and_then(Value::as_str))
+        .map(ToOwned::to_owned)
+}
+
+fn u64_field_any(value: &Value, fields: &[&str]) -> Option<u64> {
+    fields
+        .iter()
+        .find_map(|field| value.get(*field).and_then(Value::as_u64))
+}
+
+fn f64_field_any(value: &Value, fields: &[&str]) -> Option<f64> {
+    fields
+        .iter()
+        .find_map(|field| value.get(*field).and_then(Value::as_f64))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::cli::{EmitFormat, RunArgs, RunSink};
 
     use meter_core::{GeminiConfig, HarnessConfig, HarnessKind, RawEventRetention, TicketId};
     use meter_engine::{HarnessOptions, RunError, RunRequest};
-    use meter_report::ReportQuery;
+    use meter_report::{ComparisonDiscoveryQuery, ReportQuery};
 
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use super::{RunSinkSelection, engine, load_report, load_telemetry_inspection};
+    use super::{
+        RunSinkSelection, engine, load_comparison_discovery, load_report, load_telemetry_inspection,
+    };
 
     #[test]
     fn run_sink_selection_preserves_jsonl_by_default() {
@@ -187,6 +428,37 @@ mod tests {
         let report = load_report(&telemetry_dir, &ReportQuery::default())?;
 
         assert!(report.groups.iter().any(|group| group.work == "ENG-142"));
+        std::fs::remove_dir_all(workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn comparison_discovery_loads_multiple_stream_files() -> std::io::Result<()> {
+        let workspace = unique_temp_path("workspace-comparison-streams");
+        let telemetry_dir = workspace.join(".svdo").join("meter");
+        std::fs::create_dir_all(&telemetry_dir)?;
+        std::fs::write(
+            telemetry_dir.join("comparison-a.jsonl"),
+            include_str!("../../../tests/fixtures/comparison/comparable_runs.jsonl"),
+        )?;
+        std::fs::write(
+            telemetry_dir.join("comparison-b.jsonl"),
+            include_str!("../../../tests/fixtures/telemetry/valid.jsonl"),
+        )?;
+
+        let report = load_comparison_discovery(
+            &telemetry_dir,
+            &ComparisonDiscoveryQuery {
+                work: Some("ENG-142".to_owned()),
+                harnesses: vec!["codex".to_owned()],
+                ..ComparisonDiscoveryQuery::default()
+            },
+        )?;
+
+        assert!(report.runs.iter().any(|run| {
+            run.run_id == "018f6f1b-97f1-7c04-9a96-111111111111" && run.harnesses == vec!["codex"]
+        }));
+        assert_eq!(report.diagnostics.len(), 1);
         std::fs::remove_dir_all(workspace)?;
         Ok(())
     }

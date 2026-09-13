@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-09-13
+
+- Added `svdo-meter compare` for comparing telemetry and eval results across runs by ticket/work id or aggregate time window.
+- Added repeatable `--harness` and `--model` filters plus `--since` support for harness-vs-harness and model-vs-model comparison reports.
+- Added comparison reporting for performance, cost, quality, and efficiency metrics with terminal table rendering and CLI help examples.
+- Added canonical comparison reduction through run-summary style records, including model, terminal status, metrics, and command observability in telemetry run summaries.
+- Added JSON artifact enrichment from `.svdo/runs/` and `.svdo/evals/` so compare reports can include cost, eval score, required checks, violations, and rework metrics.
+- Preserved unavailable metrics distinctly from observed zero values, rendering missing values as `—` while keeping true zeroes visible as `0`.
+- Added fixture-backed unit and integration coverage for ticket-specific comparison, aggregate comparison, repeated filters, model alias matching, artifact enrichment, and unavailable-vs-zero rendering.
+
 ## 2026-09-12
 
 - Added first-class OpenCode harness support for `svdo-meter run --harness opencode`.
