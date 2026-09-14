@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-09-14
+
+- Added `--id` and `--ticket-id` as visible aliases for `svdo-meter run --ticket`, with parser and help coverage confirming all spellings map to the same ticket/work identifier.
+
 ## 2026-09-13
 
 - Added `svdo-meter compare` for comparing telemetry and eval results across runs by ticket/work id or aggregate time window.
