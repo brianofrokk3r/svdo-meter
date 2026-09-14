@@ -92,6 +92,8 @@ svdo-meter report ENG-142 --workspace ~/code/app
 svdo-meter compare ENG-142 --workspace ~/code/app
 ```
 
+For measured runs, `--ticket`, `--ticket-id`, and `--id` are equivalent spellings for the same ticket/work identifier. The value is recorded as telemetry `ticket_id` and used for session association, reports, and comparisons.
+
 SVDO Meter writes append-only telemetry to:
 
 ```text
@@ -206,6 +208,8 @@ svdo-meter run \
   --workspace ~/code/app \
   "Implement the password reset flow described in ENG-142"
 ```
+
+The ticket/work id may also be supplied as `--ticket-id ENG-142` or `--id ENG-142`; all forms map to the same telemetry and reporting field.
 
 Conceptual Codex invocation:
 

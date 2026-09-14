@@ -57,6 +57,9 @@ svdo-meter report ENG-142 --workspace ~/code/app
 svdo-meter compare ENG-142 --workspace ~/code/app
 ```
 
+The run identifier option can be spelled `--ticket`, `--ticket-id`, or `--id`.
+All three forms populate the same telemetry `ticket_id` value; examples use `--ticket` as the canonical spelling.
+
 Expected result at a high level:
 
 - telemetry is appended under `~/code/app/.svdo/meter/<run-id>.jsonl`
@@ -106,6 +109,8 @@ svdo-meter run \
   --workspace ~/code/app \
   "Implement the password reset flow described in ENG-142"
 ```
+
+`--ticket`, `--ticket-id`, and `--id` are equivalent for `svdo-meter run` and map to the same ticket/work identifier used for telemetry, session lookup, reports, and comparisons.
 
 Emit the same canonical events to stdout as newline-delimited JSON while preserving durable local telemetry:
 
@@ -157,7 +162,7 @@ Common options:
 
 | Argument | Required | Description |
 |---|---:|---|
-| `--ticket <TICKET>` | Yes | External ticket/work identifier. SVDO Meter records this as the join key for future reports or enrichment. |
+| `--ticket <TICKET>` | Yes | External ticket/work identifier. Visible aliases: `--ticket-id <TICKET>`, `--id <TICKET>`. SVDO Meter records the value as the join key for future reports or enrichment. |
 | `--harness <HARNESS>` | Yes | Agent harness. Supported values: `codex`, `claude`, `opencode`, `gemini`. |
 | `<PROMPT>` | Yes, unless `--prompt-file` is used | Inline prompt or work instruction forwarded to the harness. Prompts are not persisted by default. |
 | `--prompt-file <PATH>` | Yes, unless `<PROMPT>` is used | UTF-8 text file whose contents are forwarded to the harness as the prompt. Cannot be combined with an inline prompt. |

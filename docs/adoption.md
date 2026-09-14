@@ -17,6 +17,8 @@ svdo-meter run \
   "Implement the password reset flow described in ENG-142"
 ```
 
+`--ticket`, `--ticket-id`, and `--id` are accepted as equivalent spellings for this ticket/work identifier on measured runs.
+
 Review the work trace afterward:
 
 ```bash
