@@ -7,6 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, bail};
+use chrono::{DateTime, Utc};
 use meter_adapters::{claude_argv, codex_argv, opencode_argv};
 use meter_core::{
     ClaudeConfig, ClaudeRunOptions, CodexConfig, ExecutionPermissionMode, HarnessKind, ModelName,
@@ -18,6 +19,7 @@ use serde_json::Value;
 use crate::cli::ReportFormat;
 
 const MAX_JUDGE_OUTPUT_BYTES: usize = 1024 * 1024;
+const DEFAULT_TELEMETRY_MIN_COUNT: u64 = 1;
 
 #[derive(Debug, Clone)]
 pub struct EvalDefinition {
@@ -36,6 +38,9 @@ pub struct CheckDefinition {
     pub required: bool,
     pub weight: f64,
     pub standard: Option<String>,
+    pub event_type: Option<String>,
+    pub tool_name: Option<String>,
+    pub min_count: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -90,6 +95,27 @@ struct StreamedCommandOutput {
     stderr: Vec<u8>,
 }
 
+#[derive(Debug)]
+struct LatestTelemetry {
+    run_id: String,
+    events: Vec<TelemetryEvent>,
+}
+
+#[derive(Debug)]
+struct TelemetryEvent {
+    run_id: String,
+    event_type: String,
+    occurred_at: DateTime<Utc>,
+    tool_name: Option<String>,
+}
+
+#[derive(Debug)]
+enum LatestRunTelemetry {
+    MissingFiles,
+    NoReadableEvents,
+    Found(LatestTelemetry),
+}
+
 #[derive(Debug, Serialize)]
 struct JudgeRequest<'a> {
     eval_id: &'a str,
@@ -125,6 +151,7 @@ struct JudgeResponse {
 pub enum CheckType {
     Command,
     Judge,
+    Telemetry,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -412,6 +439,7 @@ fn run_check(
     match check.check_type {
         CheckType::Command => run_command_check(workspace, check),
         CheckType::Judge => run_judge_check(workspace, definition, check, judge_config),
+        CheckType::Telemetry => run_telemetry_check(workspace, check),
     }
 }
 
@@ -463,6 +491,212 @@ fn run_command_check(workspace: &Path, check: &CheckDefinition) -> anyhow::Resul
         harness: Some("command".to_owned()),
         session_id: None,
     })
+}
+
+fn run_telemetry_check(workspace: &Path, check: &CheckDefinition) -> anyhow::Result<CheckResult> {
+    let started = Instant::now();
+    let event_type = check
+        .event_type
+        .as_deref()
+        .with_context(|| format!("telemetry check `{}` is missing event_type", check.id))?;
+    let telemetry_dir = workspace.join(".svdo").join("meter");
+    let telemetry = load_latest_run_telemetry(&telemetry_dir)?;
+    let duration_ms = elapsed_ms(started.elapsed());
+    let failure = |violation: String| CheckResult {
+        id: check.id.clone(),
+        check_type: CheckType::Telemetry,
+        outcome: CheckOutcome::Failed,
+        required: check.required,
+        weight: check.weight,
+        score: Some(0.0),
+        duration_ms,
+        command: None,
+        exit_code: None,
+        standard: None,
+        standard_path: None,
+        violations: vec![violation],
+        output: None,
+        token_usage: None,
+        model: None,
+        harness: Some("telemetry".to_owned()),
+        session_id: None,
+    };
+
+    let latest = match telemetry {
+        LatestRunTelemetry::MissingFiles => {
+            return Ok(failure(format!(
+                "telemetry was missing: no telemetry files found in `{}`",
+                telemetry_dir.display()
+            )));
+        }
+        LatestRunTelemetry::NoReadableEvents => {
+            return Ok(failure(format!(
+                "telemetry was missing: no readable telemetry events found in `{}`",
+                telemetry_dir.display()
+            )));
+        }
+        LatestRunTelemetry::Found(latest) => latest,
+    };
+
+    let matching_count = latest
+        .events
+        .iter()
+        .filter(|event| telemetry_event_matches(event, event_type, check.tool_name.as_deref()))
+        .count() as u64;
+    let predicate = telemetry_predicate_label(event_type, check.tool_name.as_deref());
+    if matching_count == 0 {
+        return Ok(failure(format!(
+            "no matching telemetry events found in latest run `{}` for {predicate}",
+            latest.run_id
+        )));
+    }
+    if matching_count < check.min_count {
+        return Ok(failure(format!(
+            "matching telemetry events for {predicate} in latest run `{}` were below min_count: found {}, required {}",
+            latest.run_id, matching_count, check.min_count
+        )));
+    }
+
+    Ok(CheckResult {
+        id: check.id.clone(),
+        check_type: CheckType::Telemetry,
+        outcome: CheckOutcome::Passed,
+        required: check.required,
+        weight: check.weight,
+        score: Some(1.0),
+        duration_ms,
+        command: None,
+        exit_code: None,
+        standard: None,
+        standard_path: None,
+        violations: Vec::new(),
+        output: Some(format!(
+            "found {matching_count} matching telemetry event(s) in latest run `{}`",
+            latest.run_id
+        )),
+        token_usage: None,
+        model: None,
+        harness: Some("telemetry".to_owned()),
+        session_id: None,
+    })
+}
+
+fn load_latest_run_telemetry(telemetry_dir: &Path) -> anyhow::Result<LatestRunTelemetry> {
+    let paths = telemetry_paths(telemetry_dir)?;
+    if paths.is_empty() {
+        return Ok(LatestRunTelemetry::MissingFiles);
+    }
+
+    let mut events = Vec::new();
+    for path in paths {
+        let contents = match fs::read_to_string(&path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to read telemetry `{}`", path.display()));
+            }
+        };
+        events.extend(contents.lines().filter_map(parse_telemetry_event));
+    }
+    if events.is_empty() {
+        return Ok(LatestRunTelemetry::NoReadableEvents);
+    }
+
+    let latest_run_id = events
+        .iter()
+        .max_by(|left, right| {
+            left.occurred_at
+                .cmp(&right.occurred_at)
+                .then_with(|| left.run_id.cmp(&right.run_id))
+        })
+        .map(|event| event.run_id.clone())
+        .expect("events is not empty");
+    let latest_events = events
+        .into_iter()
+        .filter(|event| event.run_id == latest_run_id)
+        .collect();
+    Ok(LatestRunTelemetry::Found(LatestTelemetry {
+        run_id: latest_run_id,
+        events: latest_events,
+    }))
+}
+
+fn telemetry_paths(telemetry_dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let entries = match fs::read_dir(telemetry_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "failed to read telemetry directory `{}`",
+                    telemetry_dir.display()
+                )
+            });
+        }
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry = entry.with_context(|| {
+            format!(
+                "failed to read telemetry directory `{}`",
+                telemetry_dir.display()
+            )
+        })?;
+        if entry.file_type()?.is_file()
+            && entry.path().extension().and_then(OsStr::to_str) == Some("jsonl")
+        {
+            paths.push(entry.path());
+        }
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+fn parse_telemetry_event(line: &str) -> Option<TelemetryEvent> {
+    if line.trim().is_empty() {
+        return None;
+    }
+    let value = serde_json::from_str::<Value>(line).ok()?;
+    let run_id = value.get("run_id")?.as_str()?.to_owned();
+    let event_type = value.get("event_type")?.as_str()?.to_owned();
+    let occurred_at = value
+        .get("occurred_at")
+        .and_then(Value::as_str)
+        .and_then(|value| value.parse::<DateTime<Utc>>().ok())?;
+    let tool_name = telemetry_tool_name(&value);
+    Some(TelemetryEvent {
+        run_id,
+        event_type,
+        occurred_at,
+        tool_name,
+    })
+}
+
+fn telemetry_tool_name(value: &Value) -> Option<String> {
+    value
+        .pointer("/payload/data/tool_name")
+        .or_else(|| value.pointer("/payload/data/name"))
+        .or_else(|| value.get("tool_name"))
+        .or_else(|| value.get("name"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+fn telemetry_event_matches(
+    event: &TelemetryEvent,
+    event_type: &str,
+    tool_name: Option<&str>,
+) -> bool {
+    event.event_type == event_type
+        && tool_name.is_none_or(|expected| event.tool_name.as_deref() == Some(expected))
+}
+
+fn telemetry_predicate_label(event_type: &str, tool_name: Option<&str>) -> String {
+    match tool_name {
+        Some(tool_name) => format!("event_type `{event_type}` and tool_name `{tool_name}`"),
+        None => format!("event_type `{event_type}`"),
+    }
 }
 
 fn run_judge_check(
@@ -1053,11 +1287,27 @@ fn validate_definition(definition: &EvalDefinition, path: &Path) -> anyhow::Resu
                 check.id
             );
         }
+        if check.min_count == 0 {
+            bail!(
+                "eval definition `{}` check `{}` min_count must be at least 1",
+                path.display(),
+                check.id
+            );
+        }
         if check.check_type == CheckType::Command
             && check.command.as_deref().unwrap_or("").trim().is_empty()
         {
             bail!(
                 "eval definition `{}` command check `{}` is missing command",
+                path.display(),
+                check.id
+            );
+        }
+        if check.check_type == CheckType::Telemetry
+            && check.event_type.as_deref().unwrap_or("").trim().is_empty()
+        {
+            bail!(
+                "eval definition `{}` telemetry check `{}` is missing event_type",
                 path.display(),
                 check.id
             );
@@ -1145,6 +1395,9 @@ fn parse_checks(lines: &[&str], mut index: usize) -> anyhow::Result<(Vec<CheckDe
                 required: false,
                 weight: default_weight(),
                 standard: None,
+                event_type: None,
+                tool_name: None,
+                min_count: DEFAULT_TELEMETRY_MIN_COUNT,
             };
             apply_check_field(&mut check, rest.trim())?;
             current = Some(check);
@@ -1177,6 +1430,7 @@ fn apply_check_field(check: &mut CheckDefinition, field: &str) -> anyhow::Result
             check.check_type = match value {
                 "command" => CheckType::Command,
                 "judge" => CheckType::Judge,
+                "telemetry" => CheckType::Telemetry,
                 other => bail!("unsupported check type `{other}`"),
             };
         }
@@ -1190,6 +1444,13 @@ fn apply_check_field(check: &mut CheckDefinition, field: &str) -> anyhow::Result
         }
         "weight" => check.weight = value.parse::<f64>().context("weight must be a number")?,
         "standard" => check.standard = Some(value.to_owned()),
+        "event_type" => check.event_type = Some(value.to_owned()),
+        "tool_name" => check.tool_name = Some(value.to_owned()),
+        "min_count" => {
+            check.min_count = value
+                .parse::<u64>()
+                .context("min_count must be an integer")?
+        }
         other => bail!("unsupported check field `{other}`"),
     }
     Ok(())
@@ -1446,6 +1707,7 @@ fn check_type_label(check_type: CheckType) -> &'static str {
     match check_type {
         CheckType::Command => "command",
         CheckType::Judge => "judge",
+        CheckType::Telemetry => "telemetry",
     }
 }
 
@@ -1505,16 +1767,31 @@ checks:
     type: judge
     standard: api-architecture
     weight: 0.4
+  - id: requires-apply-patch
+    type: telemetry
+    event_type: tool.started
+    tool_name: apply_patch
+    min_count: 1
 threshold: 0.85
 "#,
         )?;
 
         assert_eq!(definition.id, "add-account-endpoint");
         assert_eq!(definition.threshold, 0.85);
-        assert_eq!(definition.checks.len(), 2);
+        assert_eq!(definition.checks.len(), 3);
         assert!(definition.checks[0].required);
         assert_eq!(definition.checks[1].check_type, CheckType::Judge);
         assert_eq!(definition.checks[1].weight, 0.4);
+        assert_eq!(definition.checks[2].check_type, CheckType::Telemetry);
+        assert_eq!(
+            definition.checks[2].event_type.as_deref(),
+            Some("tool.started")
+        );
+        assert_eq!(
+            definition.checks[2].tool_name.as_deref(),
+            Some("apply_patch")
+        );
+        assert_eq!(definition.checks[2].min_count, 1);
         Ok(())
     }
 
@@ -1578,6 +1855,9 @@ threshold: 0.85
                 required: true,
                 weight: 1.0,
                 standard: None,
+                event_type: None,
+                tool_name: None,
+                min_count: DEFAULT_TELEMETRY_MIN_COUNT,
             }],
             threshold: 1.0,
             source_path: None,
@@ -1605,6 +1885,9 @@ threshold: 0.85
                 required: false,
                 weight: 1.0,
                 standard: None,
+                event_type: None,
+                tool_name: None,
+                min_count: DEFAULT_TELEMETRY_MIN_COUNT,
             }],
             threshold: 0.0,
             source_path: None,
@@ -1618,6 +1901,94 @@ threshold: 0.85
         assert_eq!(
             result.checks[0].harness.as_deref(),
             Some("judge-unavailable")
+        );
+        fs::remove_dir_all(workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn passes_telemetry_check_for_latest_run_matching_tool_event() -> anyhow::Result<()> {
+        let workspace = unique_temp_path("svdo-meter-eval-telemetry-pass");
+        write_telemetry(
+            &workspace,
+            "run-a",
+            &[
+                telemetry_line("run-a", "2026-08-21T12:00:00Z", "tool.started", "read_file"),
+                telemetry_line("run-a", "2026-08-21T12:00:01Z", "run.completed", ""),
+            ],
+        )?;
+        write_telemetry(
+            &workspace,
+            "run-b",
+            &[
+                telemetry_line(
+                    "run-b",
+                    "2026-08-21T12:10:00Z",
+                    "tool.started",
+                    "apply_patch",
+                ),
+                telemetry_line(
+                    "run-b",
+                    "2026-08-21T12:10:01Z",
+                    "tool.started",
+                    "apply_patch",
+                ),
+                telemetry_line("run-b", "2026-08-21T12:10:02Z", "run.completed", ""),
+            ],
+        )?;
+        let definition = telemetry_definition("apply_patch", 2);
+
+        let result = run_definition(&workspace, definition, &JudgeConfig::default())?;
+
+        assert!(result.passed);
+        assert_eq!(result.checks[0].outcome, CheckOutcome::Passed);
+        assert_eq!(result.checks[0].score, Some(1.0));
+        fs::remove_dir_all(workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn fails_telemetry_check_when_telemetry_is_missing() -> anyhow::Result<()> {
+        let workspace = unique_temp_path("svdo-meter-eval-telemetry-missing");
+        fs::create_dir_all(&workspace)?;
+        let definition = telemetry_definition("apply_patch", 1);
+
+        let result = run_definition(&workspace, definition, &JudgeConfig::default())?;
+
+        assert!(!result.passed);
+        assert_eq!(result.checks[0].outcome, CheckOutcome::Failed);
+        assert!(
+            result.checks[0].violations[0]
+                .contains("telemetry was missing: no telemetry files found")
+        );
+        fs::remove_dir_all(workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn fails_telemetry_check_when_count_is_below_minimum() -> anyhow::Result<()> {
+        let workspace = unique_temp_path("svdo-meter-eval-telemetry-low-count");
+        write_telemetry(
+            &workspace,
+            "run-a",
+            &[
+                telemetry_line(
+                    "run-a",
+                    "2026-08-21T12:00:00Z",
+                    "tool.started",
+                    "apply_patch",
+                ),
+                telemetry_line("run-a", "2026-08-21T12:00:01Z", "run.completed", ""),
+            ],
+        )?;
+        let definition = telemetry_definition("apply_patch", 2);
+
+        let result = run_definition(&workspace, definition, &JudgeConfig::default())?;
+
+        assert!(!result.passed);
+        assert_eq!(result.checks[0].outcome, CheckOutcome::Failed);
+        assert!(
+            result.checks[0].violations[0].contains("were below min_count: found 1, required 2")
         );
         fs::remove_dir_all(workspace)?;
         Ok(())
@@ -1797,6 +2168,56 @@ threshold: 0.85
             harness: None,
             session_id: None,
         }
+    }
+
+    fn telemetry_definition(tool_name: &str, min_count: u64) -> EvalDefinition {
+        EvalDefinition {
+            id: "telemetry".to_owned(),
+            task: "Check telemetry".to_owned(),
+            checks: vec![CheckDefinition {
+                id: "requires-tool".to_owned(),
+                check_type: CheckType::Telemetry,
+                command: None,
+                required: true,
+                weight: 1.0,
+                standard: None,
+                event_type: Some("tool.started".to_owned()),
+                tool_name: Some(tool_name.to_owned()),
+                min_count,
+            }],
+            threshold: 1.0,
+            source_path: None,
+        }
+    }
+
+    fn write_telemetry(workspace: &Path, run_id: &str, lines: &[String]) -> anyhow::Result<()> {
+        let telemetry_dir = workspace.join(".svdo").join("meter");
+        fs::create_dir_all(&telemetry_dir)?;
+        fs::write(
+            telemetry_dir.join(format!("{run_id}.jsonl")),
+            format!("{}\n", lines.join("\n")),
+        )?;
+        Ok(())
+    }
+
+    fn telemetry_line(
+        run_id: &str,
+        occurred_at: &str,
+        event_type: &str,
+        tool_name: &str,
+    ) -> String {
+        let payload = match event_type {
+            "tool.started" => {
+                format!(
+                    r#"{{"type":"tool_started","data":{{"tool_id":"tool-1","tool_name":"{tool_name}"}}}}"#
+                )
+            }
+            "run.completed" => r#"{"type":"run_completed","data":{"metrics":{"wall_time_ms":1000,"active_time_ms":0,"command_time_ms":0,"tool_time_ms":0,"turn_count":1,"provider_event_count":1,"commands_executed":0,"failed_commands":0,"files_changed":0,"tool_calls":1,"errors":0,"token_usage":{}},"exit_code":0}}"#.to_owned(),
+            other => format!(r#"{{"type":"harness_event","data":{{"source_event":"{other}","retained_raw_payload":false}}}}"#),
+        };
+        format!(
+            r#"{{"schema_version":1,"event_id":"018f6f1b-97f1-7c04-9a96-aaaaaaaaaaaa","event_type":"{event_type}","occurred_at":"{occurred_at}","observed_at":"{occurred_at}","run_id":"{run_id}","ticket_id":"ENG-142","harness":"codex","payload":{payload}}}"#
+        )
     }
 
     fn unique_temp_path(name: &str) -> PathBuf {
