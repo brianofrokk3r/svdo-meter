@@ -81,6 +81,8 @@ cargo run -p svdo-meter -- run \
   "Implement ENG-142"
 ```
 
+For measured runs, `--ticket ENG-142`, `--ticket-id ENG-142`, and `--id ENG-142` all set the same ticket/work identifier.
+
 Example measured run with a prompt file:
 
 ```bash

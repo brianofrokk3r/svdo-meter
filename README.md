@@ -92,6 +92,8 @@ svdo-meter report ENG-142 --workspace ~/code/app
 svdo-meter compare ENG-142 --workspace ~/code/app
 ```
 
+For measured runs, `--ticket`, `--ticket-id`, and `--id` are equivalent spellings for the same ticket/work identifier. The value is recorded as telemetry `ticket_id` and used for session association, reports, and comparisons.
+
 SVDO Meter writes append-only telemetry to:
 
 ```text
@@ -206,6 +208,8 @@ svdo-meter run \
   --workspace ~/code/app \
   "Implement the password reset flow described in ENG-142"
 ```
+
+The ticket/work id may also be supplied as `--ticket-id ENG-142` or `--id ENG-142`; all forms map to the same telemetry and reporting field.
 
 Conceptual Codex invocation:
 
@@ -461,6 +465,17 @@ svdo-meter eval run api-contract --harness opencode
 ```
 
 Command checks run locally in the selected workspace. Judge checks are skipped unless `--harness codex`, `--harness claude`, or `--judge-command` is configured. The Codex and Claude judge paths invoke the selected CLI with the selected model and ask for a JSON score. Custom judge commands receive the request JSON path as their final argument, also available as `SVDO_METER_JUDGE_REQUEST`, and must print JSON containing a `score` from `0.0` to `1.0` plus optional `passed`, `violations`, usage, model, harness, and session metadata.
+
+Telemetry checks can assert that expected local `.svdo/meter/` events occurred in the latest run:
+
+```yaml
+checks:
+  - id: requires-apply-patch
+    type: telemetry
+    event_type: tool.started
+    tool_name: apply_patch
+    min_count: 1
+```
 
 ## Telemetry
 

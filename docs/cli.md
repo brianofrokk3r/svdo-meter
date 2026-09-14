@@ -57,6 +57,9 @@ svdo-meter report ENG-142 --workspace ~/code/app
 svdo-meter compare ENG-142 --workspace ~/code/app
 ```
 
+The run identifier option can be spelled `--ticket`, `--ticket-id`, or `--id`.
+All three forms populate the same telemetry `ticket_id` value; examples use `--ticket` as the canonical spelling.
+
 Expected result at a high level:
 
 - telemetry is appended under `~/code/app/.svdo/meter/<run-id>.jsonl`
@@ -106,6 +109,8 @@ svdo-meter run \
   --workspace ~/code/app \
   "Implement the password reset flow described in ENG-142"
 ```
+
+`--ticket`, `--ticket-id`, and `--id` are equivalent for `svdo-meter run` and map to the same ticket/work identifier used for telemetry, session lookup, reports, and comparisons.
 
 Emit the same canonical events to stdout as newline-delimited JSON while preserving durable local telemetry:
 
@@ -157,7 +162,7 @@ Common options:
 
 | Argument | Required | Description |
 |---|---:|---|
-| `--ticket <TICKET>` | Yes | External ticket/work identifier. SVDO Meter records this as the join key for future reports or enrichment. |
+| `--ticket <TICKET>` | Yes | External ticket/work identifier. Visible aliases: `--ticket-id <TICKET>`, `--id <TICKET>`. SVDO Meter records the value as the join key for future reports or enrichment. |
 | `--harness <HARNESS>` | Yes | Agent harness. Supported values: `codex`, `claude`, `opencode`, `gemini`. |
 | `<PROMPT>` | Yes, unless `--prompt-file` is used | Inline prompt or work instruction forwarded to the harness. Prompts are not persisted by default. |
 | `--prompt-file <PATH>` | Yes, unless `<PROMPT>` is used | UTF-8 text file whose contents are forwarded to the harness as the prompt. Cannot be combined with an inline prompt. |
@@ -304,7 +309,7 @@ Eval definitions are YAML files. Supported top-level fields:
 |---|---:|---|
 | `id` | Yes | Stable eval identifier. A requested `<EVAL>` can match this value. |
 | `task` | Yes | Human-readable task or objective being evaluated. |
-| `checks` | Yes | Ordered list of command or judge checks. |
+| `checks` | Yes | Ordered list of command, judge, or telemetry checks. |
 | `threshold` | No | Minimum aggregate score required to pass. Defaults to `1.0`. |
 
 Supported check fields:
@@ -312,11 +317,14 @@ Supported check fields:
 | Field | Required | Description |
 |---|---:|---|
 | `id` | Yes | Stable check identifier. |
-| `type` | Yes | Check kind. Supported values: `command`, `judge`. |
+| `type` | Yes | Check kind. Supported values: `command`, `judge`, `telemetry`. |
 | `command` | Yes for `command` | Shell command executed from the workspace directory. |
 | `required` | No | When `true`, a failed check hard-fails the eval regardless of aggregate score. Defaults to `false`. |
 | `weight` | No | Numeric weight used in the aggregate score. Defaults to `1.0`. |
 | `standard` | No | Referenced standard id or file for judge checks. Resolved from `.svdo/standards/`. |
+| `event_type` | Yes for `telemetry` | Canonical telemetry event name to match, such as `tool.started`. |
+| `tool_name` | No | Tool name to match for telemetry tool events, such as `apply_patch`. |
+| `min_count` | No | Minimum matching telemetry event count required to pass. Defaults to `1`. |
 
 Example:
 
@@ -342,6 +350,12 @@ checks:
     standard: api-architecture
     weight: 0.4
 
+  - id: requires-apply-patch
+    type: telemetry
+    event_type: tool.started
+    tool_name: apply_patch
+    min_count: 1
+
 threshold: 0.85
 ```
 
@@ -350,6 +364,8 @@ Command checks report success or failure, exit status, duration, and captured fa
 Judge checks are represented in the schema and result model. Without `--harness` or `--judge-command`, judge checks resolve their referenced standards and report a skipped result with a clear reason. Skipped judge checks do not block deterministic command checks from running.
 
 When `--harness codex` is set, each judge check sends the eval task and resolved standard contents to `codex exec --json`, asks the model to return only a JSON score, and reads the JSON score from the Codex output stream. When `--harness claude` is set, the same judge request is sent through `claude -p` with `--output-format stream-json`. When `--harness opencode` is set, the same judge request is sent through `opencode run --format json`.
+
+Telemetry checks read local JSONL telemetry from `.svdo/meter/` in the selected workspace and evaluate the latest run. They match canonical `event_type` values and can further require a matching `tool_name` for tool events. A telemetry check fails with a clear reason when telemetry is missing, no matching events are found, or the matching count is below `min_count`.
 
 `--judge-command` remains available for custom judge integrations. Each judge check writes a temporary request JSON file and invokes the configured program directly:
 
