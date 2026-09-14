@@ -122,7 +122,7 @@ pub struct EvalRunArgs {
 #[derive(Debug, Args)]
 pub struct RunArgs {
     /// External ticket/work identifier used as the telemetry join key.
-    #[arg(long)]
+    #[arg(long, visible_aliases = ["id", "ticket-id"])]
     pub ticket: String,
 
     /// Optional human-readable label recorded on run events.
@@ -561,6 +561,28 @@ mod tests {
         assert!(args.sinks.is_empty());
         assert_eq!(args.emit, None);
         assert_eq!(resolve_prompt(&args)?, "Do work");
+        Ok(())
+    }
+
+    #[test]
+    fn parses_run_ticket_aliases() -> anyhow::Result<()> {
+        for flag in ["--id", "--ticket-id"] {
+            let cli = Cli::try_parse_from([
+                "svdo-meter",
+                "run",
+                flag,
+                "ENG-142",
+                "--harness",
+                "codex",
+                "Do work",
+            ])?;
+            let Commands::Run(args) = cli.command else {
+                panic!("expected run command");
+            };
+
+            assert_eq!(args.ticket, "ENG-142");
+            assert_eq!(resolve_prompt(&args)?, "Do work");
+        }
         Ok(())
     }
 
@@ -1252,6 +1274,7 @@ mod tests {
         assert!(help.contains("svdo-meter"));
         assert!(run_help.contains("codex, claude, opencode, gemini"));
         assert!(run_help.contains("--harness opencode"));
+        assert!(run_help.contains("[aliases: --id, --ticket-id]"));
         assert!(run_help.contains("--opencode-agent"));
         assert!(eval_run_help.contains("codex, claude, opencode, gemini"));
         assert!(!run_help.contains("litellm"));
