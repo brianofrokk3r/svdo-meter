@@ -2,6 +2,9 @@
 
 ## 2026-09-14
 
+- Added first-class `telemetry` eval checks for `svdo-meter eval run`, supporting `event_type`, optional `tool_name`, and `min_count` assertions against local `.svdo/meter/*.jsonl` telemetry.
+- Added latest-run telemetry selection, clear telemetry failure messages for missing files, absent matching events, and counts below the requested threshold.
+- Added unit coverage for telemetry check parsing, latest-run passing checks, missing telemetry failures, and below-minimum count failures.
 - Added `--id` and `--ticket-id` as visible aliases for `svdo-meter run --ticket`, with parser and help coverage confirming all spellings map to the same ticket/work identifier.
 
 ## 2026-09-13
