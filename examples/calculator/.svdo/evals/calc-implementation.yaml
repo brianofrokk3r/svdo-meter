@@ -1,0 +1,29 @@
+id: implementation
+task: |
+  Implement the calculator CLI
+threshold: 1.0
+
+checks:
+  - id: add
+    type: command
+    command: test "$(python calc.py add 2 3)" = "5"
+    required: true
+    weight: 0.25
+
+  - id: subtract
+    type: command
+    command: test "$(python calc.py subtract 8 3)" = "5"
+    required: true
+    weight: 0.25
+
+  - id: multiply
+    type: command
+    command: test "$(python calc.py multiply 4 5)" = "20"
+    required: true
+    weight: 0.25
+
+  - id: divide
+    type: command
+    command: test "$(python calc.py divide 10 2)" = "5"
+    required: true
+    weight: 0.25

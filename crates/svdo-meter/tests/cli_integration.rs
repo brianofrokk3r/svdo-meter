@@ -30,6 +30,7 @@ fn help_succeeds_for_documented_command_paths() {
     );
     assert_success_contains(&["run", "--help"], "--codex-profile");
     assert_success_contains(&["run", "--help"], "--dangerous-bypass");
+    assert_success_contains(&["run", "--help"], "[aliases: --id, --ticket-id]");
     assert_success_contains(
         &["run", "--help"],
         "svdo-meter run --ticket ENG-142 --harness codex --dangerous-bypass PROMPT",
@@ -819,6 +820,15 @@ fn repo_sample_evals_are_runnable() {
 #[test]
 fn invalid_run_arguments_fail_before_harness_execution() {
     let output = run_svdo_meter(&["run", "--ticket", "ENG-142", "--harness", "codex"]);
+
+    assert!(!output.status.success());
+    assert_output_contains(&output, "required");
+    assert_output_contains(&output, "PROMPT");
+}
+
+#[test]
+fn run_id_alias_is_accepted_before_harness_execution() {
+    let output = run_svdo_meter(&["run", "--id", "ENG-142", "--harness", "codex"]);
 
     assert!(!output.status.success());
     assert_output_contains(&output, "required");
