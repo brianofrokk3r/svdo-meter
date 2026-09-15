@@ -10,6 +10,93 @@ const COMPARISON_FIXTURE: &str =
 const COMPARE_ENG_142_FIXTURE: &str = include_str!("../../../tests/fixtures/compare/eng_142.jsonl");
 const COMPARE_AGGREGATE_FIXTURE: &str =
     include_str!("../../../tests/fixtures/compare/aggregate_recent.jsonl");
+const TODO_CLI_EVAL: &str =
+    include_str!("../../../examples/todo-cli/.svdo/evals/todo-cli-implementation.yaml");
+const TODO_CLI_STANDARD: &str =
+    include_str!("../../../examples/todo-cli/.svdo/standards/todo-cli-quality.md");
+const TODO_CLI_TASK: &str = include_str!("../../../examples/todo-cli/TASK.md");
+const TODO_CLI_STOPWORD_MATRIX: &str =
+    include_str!("../../../examples/todo-cli/stopword-matrix.yaml");
+const TODO_CLI_STOPWORD_RUNNER: &str =
+    include_str!("../../../examples/todo-cli/run-stopword-matrix.sh");
+const TODO_CLI_STOPWORD_REPORTER: &str =
+    include_str!("../../../examples/todo-cli/report-stopword-study.sh");
+const TODO_CLI_VARIANTS: &str = include_str!("../../../examples/todo-cli/prompts/variants.yaml");
+const TODO_CLI_CONCISE_PROMPT: &str =
+    include_str!("../../../examples/todo-cli/prompts/concise-baseline.md");
+const TODO_CLI_TELEGRAPHIC_PROMPT: &str =
+    include_str!("../../../examples/todo-cli/prompts/telegraphic-low-stopword.md");
+const TODO_CLI_STOPWORD_HEAVY_PROMPT: &str =
+    include_str!("../../../examples/todo-cli/prompts/stopword-heavy-guided.md");
+const TODO_CLI_POLITE_PROMPT: &str =
+    include_str!("../../../examples/todo-cli/prompts/polite-redundant-stopword.md");
+const TODO_CLI_REFERENCE_IMPLEMENTATION: &str = r#"#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+STORE = Path(".todo.json")
+
+def load():
+    if not STORE.exists():
+        return []
+    return json.loads(STORE.read_text())
+
+def save(items):
+    STORE.write_text(json.dumps(items))
+
+def fail(message):
+    print(message, file=sys.stderr)
+    sys.exit(1)
+
+def find(items, raw_id):
+    try:
+        item_id = int(raw_id)
+    except ValueError:
+        fail("invalid id")
+    for item in items:
+        if item["id"] == item_id:
+            return item
+    fail("todo not found")
+
+args = sys.argv[1:]
+if not args:
+    fail("missing command")
+
+command = args[0]
+items = load()
+
+if command == "add":
+    if len(args) != 2:
+        fail("usage: add <text>")
+    next_id = max([item["id"] for item in items], default=0) + 1
+    item = {"id": next_id, "text": args[1], "completed": False}
+    items.append(item)
+    save(items)
+    print(f"Added {next_id}: {args[1]}")
+elif command == "list":
+    if len(args) != 1:
+        fail("usage: list")
+    for item in items:
+        mark = "x" if item["completed"] else " "
+        print(f'{item["id"]}. [{mark}] {item["text"]}')
+elif command == "complete":
+    if len(args) != 2:
+        fail("usage: complete <id>")
+    item = find(items, args[1])
+    item["completed"] = True
+    save(items)
+    print(f'Completed {item["id"]}: {item["text"]}')
+elif command == "delete":
+    if len(args) != 2:
+        fail("usage: delete <id>")
+    item = find(items, args[1])
+    items = [candidate for candidate in items if candidate["id"] != item["id"]]
+    save(items)
+    print(f'Deleted {item["id"]}: {item["text"]}')
+else:
+    fail("unknown command")
+"#;
 
 #[test]
 fn help_succeeds_for_documented_command_paths() {
@@ -817,6 +904,109 @@ fn repo_sample_evals_are_runnable() {
 }
 
 #[test]
+fn todo_cli_fixture_eval_passes_against_reference_implementation() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-todo-cli-fixture");
+    fs::create_dir_all(&workspace)?;
+    fs::write(workspace.join("TASK.md"), TODO_CLI_TASK)?;
+    fs::write(workspace.join("todo.py"), TODO_CLI_REFERENCE_IMPLEMENTATION)?;
+    write_eval_definition(&workspace, "todo-cli-implementation.yaml", TODO_CLI_EVAL)?;
+    write_standard(&workspace, "todo-cli-quality.md", TODO_CLI_STANDARD)?;
+
+    let output = run_svdo_meter(&[
+        "eval",
+        "run",
+        "todo-cli-implementation",
+        "--workspace",
+        path_str(&workspace)?,
+        "--format",
+        "json",
+    ]);
+
+    assert!(output.status.success());
+    assert_stdout_contains(&output, "\"id\": \"todo-cli-implementation\"");
+    assert_stdout_contains(&output, "\"id\": \"delete-removes-item-with-stable-ids\"");
+    assert_stdout_contains(&output, "\"harness\": \"judge-unavailable\"");
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn todo_cli_stopword_matrix_documents_runnable_variants() {
+    assert!(TODO_CLI_STOPWORD_MATRIX.contains("default_harness: codex"));
+    assert!(TODO_CLI_STOPWORD_MATRIX.contains("default_model: gpt-5.5"));
+    assert!(TODO_CLI_STOPWORD_MATRIX.contains("default_repetitions_per_variant: 30"));
+    assert!(TODO_CLI_STOPWORD_MATRIX.contains("primary: output_tokens"));
+    assert!(TODO_CLI_STOPWORD_MATRIX.contains("svdo-meter report STOPWORD-TODO"));
+    assert!(TODO_CLI_STOPWORD_MATRIX.contains("svdo-meter compare STOPWORD-TODO"));
+    assert!(TODO_CLI_STOPWORD_MATRIX.contains("./report-stopword-study.sh STOPWORD-TODO"));
+    assert!(TODO_CLI_STOPWORD_MATRIX.contains("Welch-style 95%"));
+
+    for variant in [
+        (
+            "concise-baseline",
+            "prompts/concise-baseline.md",
+            TODO_CLI_CONCISE_PROMPT,
+        ),
+        (
+            "telegraphic-low-stopword",
+            "prompts/telegraphic-low-stopword.md",
+            TODO_CLI_TELEGRAPHIC_PROMPT,
+        ),
+        (
+            "stopword-heavy-guided",
+            "prompts/stopword-heavy-guided.md",
+            TODO_CLI_STOPWORD_HEAVY_PROMPT,
+        ),
+        (
+            "polite-redundant-stopword",
+            "prompts/polite-redundant-stopword.md",
+            TODO_CLI_POLITE_PROMPT,
+        ),
+    ] {
+        let (id, prompt_file, prompt_body) = variant;
+        assert!(
+            TODO_CLI_VARIANTS.contains(id),
+            "missing variant metadata for {id}"
+        );
+        assert!(
+            TODO_CLI_STOPWORD_MATRIX.contains(id),
+            "missing matrix entry for {id}"
+        );
+        assert!(
+            TODO_CLI_STOPWORD_MATRIX.contains(prompt_file),
+            "missing matrix prompt file for {id}"
+        );
+        assert!(prompt_body.contains("add"));
+        assert!(prompt_body.contains("list"));
+        assert!(prompt_body.contains("complete"));
+        assert!(prompt_body.contains("delete"));
+    }
+}
+
+#[test]
+fn todo_cli_stopword_runner_uses_svdo_meter_workflow_and_overrides() {
+    assert!(TODO_CLI_STOPWORD_RUNNER.starts_with("#!/usr/bin/env bash"));
+    assert!(TODO_CLI_STOPWORD_RUNNER.contains("SVDO_STOPWORD_HARNESS:-codex"));
+    assert!(TODO_CLI_STOPWORD_RUNNER.contains("SVDO_STOPWORD_MODEL:-gpt-5.5"));
+    assert!(TODO_CLI_STOPWORD_RUNNER.contains("SVDO_STOPWORD_REPETITIONS:-30"));
+    assert!(TODO_CLI_STOPWORD_RUNNER.contains("SVDO_STOPWORD_VARIANTS"));
+    assert!(TODO_CLI_STOPWORD_RUNNER.contains("SVDO_STOPWORD_DRY_RUN"));
+    assert!(TODO_CLI_STOPWORD_RUNNER.contains("cp \"$SCRIPT_DIR/TASK.md\""));
+    assert!(TODO_CLI_STOPWORD_RUNNER.contains("svdo-meter"));
+    assert!(TODO_CLI_STOPWORD_RUNNER.contains("run"));
+    assert!(TODO_CLI_STOPWORD_RUNNER.contains("--prompt-file"));
+    assert!(TODO_CLI_STOPWORD_RUNNER.contains("eval run todo-cli-implementation"));
+    assert!(TODO_CLI_STOPWORD_RUNNER.contains("report"));
+    assert!(TODO_CLI_STOPWORD_RUNNER.contains("compare"));
+    assert!(TODO_CLI_STOPWORD_RUNNER.contains("report-stopword-study.sh"));
+    assert!(TODO_CLI_STOPWORD_RUNNER.contains(".svdo/meter/"));
+    assert!(TODO_CLI_STOPWORD_RUNNER.contains(".svdo/evals/"));
+    assert!(TODO_CLI_STOPWORD_REPORTER.contains("SVDO Stopword Study Report"));
+    assert!(TODO_CLI_STOPWORD_REPORTER.contains("Welch-style 95%"));
+    assert!(TODO_CLI_STOPWORD_REPORTER.contains("-eval.json"));
+}
+
+#[test]
 fn invalid_run_arguments_fail_before_harness_execution() {
     let output = run_svdo_meter(&["run", "--ticket", "ENG-142", "--harness", "codex"]);
 
@@ -1058,6 +1248,94 @@ fn report_command_reads_per_run_stream_directory() -> std::io::Result<()> {
     assert!(terminal.status.success());
     assert_stdout_contains(&terminal, "SVDO Trace");
     assert_stdout_contains(&terminal, "Runs\n  2");
+
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn todo_cli_stopword_reporter_groups_variants_and_eval_artifacts() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-stopword-reporter-integration");
+    write_workspace_telemetry_streams(
+        &workspace,
+        r#"
+{"schema_version":1,"event_id":"018f6f1b-97f1-7c04-9a96-400000000001","event_type":"run.completed","occurred_at":"2026-09-01T12:00:00Z","observed_at":"2026-09-01T12:00:00Z","run_id":"018f6f1b-97f1-7c04-9a96-400000000101","ticket_id":"STOPWORD-TODO","label":"concise-baseline-001","harness":"codex","requested_model":"gpt-5.5","resolved_model":"openai/gpt-5.5","session_id":"sess-study-1","payload":{"type":"run_completed","data":{"metrics":{"wall_time_ms":1000,"active_time_ms":1000,"command_time_ms":0,"tool_time_ms":0,"turn_count":1,"provider_event_count":1,"commands_executed":0,"failed_commands":0,"files_changed":1,"tool_calls":1,"errors":0,"token_usage":{"input_tokens":100,"cached_input_tokens":0,"cache_write_tokens":0,"output_tokens":100,"reasoning_tokens":0}},"exit_code":0}}}
+{"schema_version":1,"event_id":"018f6f1b-97f1-7c04-9a96-400000000002","event_type":"run.completed","occurred_at":"2026-09-01T12:01:00Z","observed_at":"2026-09-01T12:01:00Z","run_id":"018f6f1b-97f1-7c04-9a96-400000000102","ticket_id":"STOPWORD-TODO","label":"concise-baseline-002","harness":"codex","requested_model":"gpt-5.5","resolved_model":"openai/gpt-5.5","session_id":"sess-study-2","payload":{"type":"run_completed","data":{"metrics":{"wall_time_ms":1000,"active_time_ms":1000,"command_time_ms":0,"tool_time_ms":0,"turn_count":1,"provider_event_count":1,"commands_executed":0,"failed_commands":0,"files_changed":1,"tool_calls":1,"errors":0,"token_usage":{"input_tokens":100,"cached_input_tokens":0,"cache_write_tokens":0,"output_tokens":102,"reasoning_tokens":0}},"exit_code":0}}}
+{"schema_version":1,"event_id":"018f6f1b-97f1-7c04-9a96-400000000003","event_type":"run.completed","occurred_at":"2026-09-01T12:02:00Z","observed_at":"2026-09-01T12:02:00Z","run_id":"018f6f1b-97f1-7c04-9a96-400000000103","ticket_id":"STOPWORD-TODO","label":"stopword-heavy-guided-001","harness":"codex","requested_model":"gpt-5.5","resolved_model":"openai/gpt-5.5","session_id":"sess-study-3","payload":{"type":"run_completed","data":{"metrics":{"wall_time_ms":1000,"active_time_ms":1000,"command_time_ms":0,"tool_time_ms":0,"turn_count":1,"provider_event_count":1,"commands_executed":0,"failed_commands":0,"files_changed":1,"tool_calls":1,"errors":0,"token_usage":{"input_tokens":100,"cached_input_tokens":0,"cache_write_tokens":0,"output_tokens":150,"reasoning_tokens":0}},"exit_code":0}}}
+{"schema_version":1,"event_id":"018f6f1b-97f1-7c04-9a96-400000000004","event_type":"run.completed","occurred_at":"2026-09-01T12:03:00Z","observed_at":"2026-09-01T12:03:00Z","run_id":"018f6f1b-97f1-7c04-9a96-400000000104","ticket_id":"STOPWORD-TODO","label":"stopword-heavy-guided-002","harness":"codex","requested_model":"gpt-5.5","resolved_model":"openai/gpt-5.5","session_id":"sess-study-4","payload":{"type":"run_completed","data":{"metrics":{"wall_time_ms":1000,"active_time_ms":1000,"command_time_ms":0,"tool_time_ms":0,"turn_count":1,"provider_event_count":1,"commands_executed":0,"failed_commands":0,"files_changed":1,"tool_calls":1,"errors":0,"token_usage":{"input_tokens":100,"cached_input_tokens":0,"cache_write_tokens":0,"output_tokens":152,"reasoning_tokens":0}},"exit_code":0}}}
+"#,
+    )?;
+    write_compare_artifact(
+        &workspace,
+        "evals/concise-baseline-001-eval.json",
+        r#"
+{
+  "results": [
+    {"overall_score": 1.0, "checks": [{"type": "command", "outcome": "passed", "required": true, "violations": []}]}
+  ]
+}
+"#,
+    )?;
+    write_compare_artifact(
+        &workspace,
+        "evals/concise-baseline-002-eval.json",
+        r#"
+{
+  "results": [
+    {"overall_score": 1.0, "checks": [{"type": "command", "outcome": "passed", "required": true, "violations": []}]}
+  ]
+}
+"#,
+    )?;
+    write_compare_artifact(
+        &workspace,
+        "evals/stopword-heavy-guided-001-eval.json",
+        r#"
+{
+  "results": [
+    {"overall_score": 0.9, "checks": [{"type": "command", "outcome": "passed", "required": true, "violations": []}, {"type": "judge", "outcome": "passed", "required": false, "score": 0.8, "violations": ["style"]}]}
+  ]
+}
+"#,
+    )?;
+    write_compare_artifact(
+        &workspace,
+        "evals/stopword-heavy-guided-002-eval.json",
+        r#"
+{
+  "results": [
+    {"overall_score": 0.8, "checks": [{"type": "command", "outcome": "failed", "required": true, "violations": []}, {"type": "judge", "outcome": "passed", "required": false, "score": 0.9, "violations": []}]}
+  ]
+}
+"#,
+    )?;
+
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let reporter = repo_root
+        .join("examples")
+        .join("todo-cli")
+        .join("report-stopword-study.sh");
+    let output = Command::new(reporter)
+        .args([
+            "STOPWORD-TODO",
+            "--workspace",
+            path_str(&workspace)?,
+            "--baseline",
+            "concise-baseline",
+        ])
+        .output()?;
+
+    assert!(output.status.success());
+    assert_stdout_contains(&output, "SVDO Stopword Study Report - STOPWORD-TODO");
+    assert_stdout_contains(&output, "Metric: output_tokens");
+    assert_stdout_contains(&output, "concise-baseline");
+    assert_stdout_contains(&output, "stopword-heavy-guided");
+    assert_stdout_contains(&output, "Mean output");
+    assert_stdout_contains(&output, "Variance");
+    assert_stdout_contains(&output, "Required");
+    assert_stdout_contains(&output, "Judge");
+    assert_stdout_contains(&output, "Comparisons vs baseline");
+    assert_stdout_contains(&output, "significant by heuristic");
 
     fs::remove_dir_all(workspace)?;
     Ok(())
