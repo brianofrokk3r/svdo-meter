@@ -48,6 +48,24 @@ That view answers a common team question: did this feature spend most agent time
 
 ## Run The Workflow Yourself
 
+To run the full workflow with one command, use:
+
+```bash
+./examples/label-grouped-reporting/run-plan-implement-report.sh
+```
+
+The script copies the todo CLI fixture into a fresh temporary workspace, runs the `plan` and `implement` phases with the same work id, then prints the overall report, each label-filtered report, and the label group summary.
+
+Use environment variables or flags to adapt it:
+
+```bash
+SVDO_METER_BIN=./target/debug/svdo-meter \
+./examples/label-grouped-reporting/run-plan-implement-report.sh \
+  --workspace /tmp/svdo-label-grouped-reporting \
+  --harness codex \
+  --model gpt-5.5
+```
+
 Create a disposable workspace from the todo CLI fixture:
 
 ```bash
