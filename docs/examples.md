@@ -18,6 +18,12 @@ Try the fixture-backed report from the repository root:
 ./examples/label-grouped-reporting/report-label-groups.sh
 ```
 
+Or run the planning phase, implementation phase, and reports end to end:
+
+```bash
+./examples/label-grouped-reporting/run-plan-implement-report.sh
+```
+
 Then inspect the underlying SVDO Meter reports:
 
 ```bash
