@@ -349,7 +349,7 @@ Command checks report success or failure, exit status, duration, and captured fa
 
 Judge checks are represented in the schema and result model. Without `--harness` or `--judge-command`, judge checks resolve their referenced standards and report a skipped result with a clear reason. Skipped judge checks do not block deterministic command checks from running.
 
-When `--harness codex` is set, each judge check sends the eval task and resolved standard contents to `codex exec --json`, asks the model to return only a JSON score, and reads the JSON score from the Codex output stream. When `--harness claude` is set, the same judge request is sent through `claude -p` with `--output-format stream-json`. When `--harness opencode` is set, the same judge request is sent through `opencode run --format json`.
+When `--harness codex` is set, each judge check sends the eval task and resolved standard contents to `codex exec --json --skip-git-repo-check`, asks the model to return only a JSON score, and reads the JSON score from the Codex output stream. The skip flag is applied only to eval judge runs so disposable, non-git eval workspaces can be judged without changing normal Codex harness runs. When `--harness claude` is set, the same judge request is sent through `claude -p` with `--output-format stream-json`. When `--harness opencode` is set, the same judge request is sent through `opencode run --format json`.
 
 `--judge-command` remains available for custom judge integrations. Each judge check writes a temporary request JSON file and invokes the configured program directly:
 

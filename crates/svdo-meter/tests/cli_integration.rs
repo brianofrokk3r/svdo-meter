@@ -633,6 +633,10 @@ case "$*" in
   *"--model gpt-5"*) ;;
   *) exit 11 ;;
 esac
+case "$*" in
+  *"--skip-git-repo-check"*) ;;
+  *) exit 12 ;;
+esac
 printf '{"type":"agent_message","message":"{\"score\":1.0,\"passed\":true,\"violations\":[],\"model\":\"gpt-5\",\"harness\":\"codex\"}"}\n'
 "#,
     )?;
