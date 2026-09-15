@@ -46,6 +46,36 @@ Insight: implement used 71.2% of measured agent time.
 
 That view answers a common team question: did this feature spend most agent time on planning, implementation, or both? The labels are copied into canonical telemetry, so the same work id can be reported as one feature or filtered into phase-specific traces.
 
+## Inspect Spend By Label
+
+To include estimated spend, pass a pricing file. The included pricing file uses illustrative fixture rates keyed by the telemetry model identifier:
+
+```bash
+./examples/label-grouped-reporting/report-label-groups.sh \
+  --pricing-file examples/label-grouped-reporting/pricing.example.json
+```
+
+Example output from the fixture:
+
+```text
+SVDO Label Group Report - LABEL-TODO-DUEDATES
+Workspace: examples/label-grouped-reporting
+
+Pricing: examples/label-grouped-reporting/pricing.example.json
+
+Label       Runs  Agent time  Input tokens  Output tokens        Spend
+----------  ----  ----------  ------------  -------------  -----------
+plan           1  5m 35s             14200           2100      $0.0387
+implement      1  13m 50s            38600           7600      $0.1242
+----------  ----  ----------  ------------  -------------  -----------
+total          2  19m 25s            52800           9700      $0.1630
+
+Insight: implement used 71.2% of measured agent time.
+Insight: implement used 76.2% of estimated spend.
+```
+
+`svdo-meter report` calculates cost only when a pricing file is supplied. The helper still uses standard `--label` filters and CSV output; the pricing file just makes `svdo-meter report` emit cost columns that can be summarized by label.
+
 ## Run The Workflow Yourself
 
 To run the full workflow with one command, use:
@@ -106,6 +136,7 @@ svdo-meter report LABEL-TODO-DUEDATES --workspace "$WORKSPACE"
 svdo-meter report LABEL-TODO-DUEDATES --label plan --workspace "$WORKSPACE"
 svdo-meter report LABEL-TODO-DUEDATES --label implement --workspace "$WORKSPACE"
 ./examples/label-grouped-reporting/report-label-groups.sh LABEL-TODO-DUEDATES --workspace "$WORKSPACE"
+./examples/label-grouped-reporting/report-label-groups.sh LABEL-TODO-DUEDATES --workspace "$WORKSPACE" --pricing-file examples/label-grouped-reporting/pricing.example.json
 ```
 
 `svdo-meter report` does not need a special grouping flag here. The helper uses the existing `--label` filter and CSV output to compare the phase totals that SVDO Meter already records.
