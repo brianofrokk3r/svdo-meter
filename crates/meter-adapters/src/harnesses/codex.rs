@@ -152,6 +152,9 @@ pub fn codex_argv(
     if config.yolo {
         args.push(OsString::from("--dangerously-bypass-approvals-and-sandbox"));
     }
+    if config.skip_git_repo_check {
+        args.push(OsString::from("--skip-git-repo-check"));
+    }
     for override_value in &config.config_overrides {
         args.push(OsString::from("--config"));
         args.push(OsString::from(override_value.as_key_value()));
@@ -512,6 +515,7 @@ mod tests {
             sandbox: Some(meter_core::CodexSandboxMode::WorkspaceWrite),
             approval_mode: CodexApprovalMode::ApproveForMe,
             yolo: true,
+            skip_git_repo_check: true,
             ..CodexConfig::default()
         };
 
@@ -528,6 +532,7 @@ mod tests {
                 OsString::from("workspace-write"),
                 OsString::from("--approve-for-me"),
                 OsString::from("--dangerously-bypass-approvals-and-sandbox"),
+                OsString::from("--skip-git-repo-check"),
                 OsString::from("Prototype"),
             ]
         );

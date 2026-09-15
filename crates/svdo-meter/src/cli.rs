@@ -30,7 +30,7 @@ pub enum Commands {
     Eval(EvalArgs),
     #[command(about = "Run measured agent CLI work")]
     #[command(
-        after_help = "Examples:\n  svdo-meter run --ticket ENG-142 --harness codex PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --prompt-file prompt.txt\n  svdo-meter run --ticket ENG-142 --harness codex --codex-profile default PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-sandbox workspace-write --codex-config model_reasoning_effort=high PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --dangerous-bypass PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-yolo PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --model sonnet PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --claude-continue PROMPT\n  svdo-meter run --ticket ENG-142 --harness opencode --model github-copilot/gpt-5 --opencode-agent build PROMPT\n\nOpenCode runs use opencode run --format json."
+        after_help = "Examples:\n  svdo-meter run --ticket ENG-142 --harness codex PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --prompt-file prompt.txt\n  svdo-meter run --ticket ENG-142 --harness codex --codex-profile default PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-sandbox workspace-write --codex-config model_reasoning_effort=high PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-skip-git-repo-check PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --dangerous-bypass PROMPT\n  svdo-meter run --ticket ENG-142 --harness codex --codex-yolo PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --model sonnet PROMPT\n  svdo-meter run --ticket ENG-142 --harness claude --claude-continue PROMPT\n  svdo-meter run --ticket ENG-142 --harness opencode --model github-copilot/gpt-5 --opencode-agent build PROMPT\n\nOpenCode runs use opencode run --format json."
     )]
     Run(Box<RunArgs>),
     #[command(about = "Generate a local SVDO Trace report from JSONL telemetry")]
@@ -264,6 +264,10 @@ pub struct RunArgs {
     /// Ask Codex to bypass approvals and sandboxing. Dangerous.
     #[arg(long, help_heading = "Codex options")]
     pub codex_yolo: bool,
+
+    /// Ask Codex to run outside a trusted git repository.
+    #[arg(long, help_heading = "Codex options")]
+    pub codex_skip_git_repo_check: bool,
 
     /// Codex config override as key=value. Repeatable.
     #[arg(long, value_name = "key=value", help_heading = "Codex options")]
@@ -706,6 +710,7 @@ mod tests {
             "workspace-write",
             "--codex-approve-for-me",
             "--codex-yolo",
+            "--codex-skip-git-repo-check",
             "--codex-config",
             "model_reasoning_effort=high",
             "--codex-config",
@@ -721,6 +726,7 @@ mod tests {
         assert_eq!(args.codex_sandbox, Some(CodexSandboxMode::WorkspaceWrite));
         assert!(args.codex_approve_for_me);
         assert!(args.codex_yolo);
+        assert!(args.codex_skip_git_repo_check);
         assert_eq!(
             args.codex_config,
             vec!["model_reasoning_effort=high", "features.foo=true"]

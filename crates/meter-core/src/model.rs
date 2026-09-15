@@ -122,6 +122,7 @@ pub struct CodexConfig {
     pub sandbox: Option<CodexSandboxMode>,
     pub approval_mode: CodexApprovalMode,
     pub yolo: bool,
+    pub skip_git_repo_check: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub config_overrides: Vec<CodexConfigOverride>,
 }
@@ -136,6 +137,7 @@ impl Default for CodexConfig {
             sandbox: None,
             approval_mode: CodexApprovalMode::default(),
             yolo: false,
+            skip_git_repo_check: false,
             config_overrides: Vec::new(),
         }
     }

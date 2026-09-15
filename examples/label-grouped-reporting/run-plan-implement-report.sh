@@ -1,4 +1,7 @@
-#!/usr/bin/env bash
+#!/bin/sh
+if [ -z "${BASH_VERSION:-}" ]; then
+  exec /usr/bin/env bash "$0" "$@"
+fi
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -85,11 +88,26 @@ REPORTER="$SCRIPT_DIR/report-label-groups.sh"
 
 cp -R "$REPO_ROOT/examples/todo-cli/." "$WORKSPACE/"
 
+codex_git_handling="not needed"
+
 run_args=(
   --ticket "$WORK_ID"
   --harness "$HARNESS"
   --workspace "$WORKSPACE"
 )
+
+if [[ "$HARNESS" == "codex" ]]; then
+  codex_run_help="$("$SVDO_METER_BIN" run --help 2>/dev/null || true)"
+  if [[ "$codex_run_help" == *"--codex-skip-git-repo-check"* ]]; then
+    run_args+=(--codex-skip-git-repo-check)
+    codex_git_handling="skip repo check"
+  elif [[ ! -d "$WORKSPACE/.git" ]] && command -v git >/dev/null 2>&1; then
+    git -C "$WORKSPACE" init --quiet
+    codex_git_handling="initialized disposable git repo"
+  else
+    codex_git_handling="unsupported by svdo-meter"
+  fi
+fi
 
 if [[ -n "$MODEL" ]]; then
   run_args+=(--model "$MODEL")
@@ -103,6 +121,9 @@ printf 'SVDO Label Grouped Workflow\n'
 printf 'Work: %s\n' "$WORK_ID"
 printf 'Workspace: %s\n' "$WORKSPACE"
 printf 'Harness: %s\n' "$HARNESS"
+if [[ "$HARNESS" == "codex" ]]; then
+  printf 'Codex git handling: %s\n' "$codex_git_handling"
+fi
 if [[ -n "$MODEL" ]]; then
   printf 'Model: %s\n' "$MODEL"
 fi

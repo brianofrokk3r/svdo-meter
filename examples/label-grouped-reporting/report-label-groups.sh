@@ -1,4 +1,7 @@
-#!/usr/bin/env bash
+#!/bin/sh
+if [ -z "${BASH_VERSION:-}" ]; then
+  exec /usr/bin/env bash "$0" "$@"
+fi
 set -euo pipefail
 
 WORK_ID="LABEL-TODO-DUEDATES"
@@ -6,7 +9,7 @@ WORKSPACE="examples/label-grouped-reporting"
 LABELS=("plan" "implement")
 SVDO_METER_BIN="${SVDO_METER_BIN:-svdo-meter}"
 
-if [[ $# -gt 0 && "$1" != "--workspace" ]]; then
+if [[ $# -gt 0 && "$1" != "--workspace" && "$1" != "--label" && "$1" != "--help" && "$1" != "-h" ]]; then
   WORK_ID="$1"
   shift
 fi

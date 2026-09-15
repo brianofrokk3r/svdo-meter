@@ -1038,7 +1038,7 @@ fn codex_flags_fail_with_non_codex_harness_before_harness_execution() {
         "ENG-142",
         "--harness",
         "claude",
-        "--codex-yolo",
+        "--codex-skip-git-repo-check",
         "Implement ENG-142",
     ]);
 
