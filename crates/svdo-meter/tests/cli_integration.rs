@@ -941,8 +941,8 @@ fn todo_cli_stopword_matrix_documents_runnable_variants() {
     assert!(TODO_CLI_STOPWORD_MATRIX.contains("default_model: gpt-5.5"));
     assert!(TODO_CLI_STOPWORD_MATRIX.contains("default_repetitions_per_variant: 30"));
     assert!(TODO_CLI_STOPWORD_MATRIX.contains("primary: output_tokens"));
-    assert!(TODO_CLI_STOPWORD_MATRIX.contains("svdo-meter report STOPWORD-TODO"));
-    assert!(TODO_CLI_STOPWORD_MATRIX.contains("svdo-meter compare STOPWORD-TODO"));
+    assert!(TODO_CLI_STOPWORD_MATRIX.contains("svdo-meter report --workspace <workspace>"));
+    assert!(TODO_CLI_STOPWORD_MATRIX.contains("svdo-meter compare --workspace <workspace>"));
     assert!(TODO_CLI_STOPWORD_MATRIX.contains("./report-stopword-study.sh STOPWORD-TODO"));
     assert!(TODO_CLI_STOPWORD_MATRIX.contains("Welch-style 95%"));
 
@@ -994,6 +994,7 @@ fn todo_cli_stopword_runner_uses_svdo_meter_workflow_and_overrides() {
     assert!(TODO_CLI_STOPWORD_RUNNER.contains("SVDO_STOPWORD_HARNESS:-codex"));
     assert!(TODO_CLI_STOPWORD_RUNNER.contains("SVDO_STOPWORD_MODEL:-gpt-5.5"));
     assert!(TODO_CLI_STOPWORD_RUNNER.contains("SVDO_STOPWORD_REPETITIONS:-30"));
+    assert!(TODO_CLI_STOPWORD_RUNNER.contains("SVDO_STOPWORD_JUDGE:-1"));
     assert!(TODO_CLI_STOPWORD_RUNNER.contains("SVDO_STOPWORD_VARIANTS"));
     assert!(TODO_CLI_STOPWORD_RUNNER.contains("SVDO_STOPWORD_DRY_RUN"));
     assert!(TODO_CLI_STOPWORD_RUNNER.contains("cp \"$SCRIPT_DIR/TASK.md\""));

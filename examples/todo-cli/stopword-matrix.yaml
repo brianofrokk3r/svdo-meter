@@ -5,6 +5,7 @@ default_harness: codex
 default_model: gpt-5.5
 default_repetitions_per_variant: 30
 label_template: "{variant_id}-{repetition:03d}"
+ticket_template: "{work_id}-{label}"
 
 description: >
   Balanced run matrix for measuring how semantically equivalent todo-cli prompts
@@ -21,12 +22,21 @@ metric_focus:
     - judge_score
 
 artifact_expectations:
+  persistent_output: study-output/<work-id>/
+  run_log: study-output/<work-id>/run.log
+  aggregate_workspace: <workspace>/
+  per_run_workspaces: <workspace>/runs/<label>.<suffix>/
   telemetry: .svdo/meter/
   eval_results: .svdo/evals/<label>-eval.json
   reports:
-    - svdo-meter report STOPWORD-TODO --workspace <workspace>
-    - svdo-meter compare STOPWORD-TODO --workspace <workspace>
+    - svdo-meter report --workspace <workspace>
+    - svdo-meter compare --workspace <workspace>
     - ./report-stopword-study.sh STOPWORD-TODO --workspace <workspace> --baseline concise-baseline
+  saved_report_files:
+    - study-output/<work-id>/svdo-report.txt
+    - study-output/<work-id>/svdo-compare.txt
+    - study-output/<work-id>/study-summary.txt
+    - study-output/<work-id>/study-info.txt
 
 statistical_report:
   command: ./report-stopword-study.sh STOPWORD-TODO --workspace <workspace> --baseline concise-baseline
@@ -57,9 +67,11 @@ override_environment:
   SVDO_STOPWORD_MODEL: Override the harness-specific model identifier.
   SVDO_STOPWORD_REPETITIONS: Override repetitions per variant.
   SVDO_STOPWORD_VARIANTS: Space-separated variant ids to include.
+  SVDO_STOPWORD_OUTPUT_ROOT: Override the persistent output root.
+  SVDO_STOPWORD_OUTPUT_DIR: Override the exact persistent output directory.
   SVDO_STOPWORD_DRY_RUN: Set to 1 to print commands without executing agent runs.
   SVDO_STOPWORD_RUN_EVALS: Set to 0 to skip per-run evals.
-  SVDO_STOPWORD_JUDGE: Set to 1 to pass harness and model to judge checks.
+  SVDO_STOPWORD_JUDGE: Set to 0 to skip passing harness and model to judge checks.
   SVDO_METER_BIN: Override the svdo-meter executable path.
 
 cost_time_guidance:

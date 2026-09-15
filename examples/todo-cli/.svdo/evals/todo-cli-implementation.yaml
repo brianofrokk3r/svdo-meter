@@ -6,31 +6,31 @@ threshold: 0.8
 checks:
   - id: add-persists-item
     type: command
-    command: rm -f .todo.json add.out && python todo.py add "Buy milk" > add.out && grep -Fx "Added 1: Buy milk" add.out && test -f .todo.json
+    command: tmpdir=$(mktemp -d) && cp todo.py "$tmpdir"/todo.py && cd "$tmpdir" && python todo.py add "Buy milk" > add.out && grep -Fx "Added 1: Buy milk" add.out && test -f .todo.json
     required: true
     weight: 0.2
 
   - id: list-shows-open-and-completed-items
     type: command
-    command: rm -f .todo.json list.out && python todo.py add "Buy milk" >/dev/null && python todo.py add "Write tests" >/dev/null && python todo.py complete 1 >/dev/null && python todo.py list > list.out && grep -Fx "1. [x] Buy milk" list.out && grep -Fx "2. [ ] Write tests" list.out
+    command: tmpdir=$(mktemp -d) && cp todo.py "$tmpdir"/todo.py && cd "$tmpdir" && python todo.py add "Buy milk" >/dev/null && python todo.py add "Write tests" >/dev/null && python todo.py complete 1 >/dev/null && python todo.py list > list.out && grep -Fx "1. [x] Buy milk" list.out && grep -Fx "2. [ ] Write tests" list.out
     required: true
     weight: 0.25
 
   - id: complete-updates-existing-item
     type: command
-    command: rm -f .todo.json complete.out list.out && python todo.py add "Ship fixture" >/dev/null && python todo.py complete 1 > complete.out && grep -Fx "Completed 1: Ship fixture" complete.out && python todo.py list > list.out && grep -Fx "1. [x] Ship fixture" list.out
+    command: tmpdir=$(mktemp -d) && cp todo.py "$tmpdir"/todo.py && cd "$tmpdir" && python todo.py add "Ship fixture" >/dev/null && python todo.py complete 1 > complete.out && grep -Fx "Completed 1: Ship fixture" complete.out && python todo.py list > list.out && grep -Fx "1. [x] Ship fixture" list.out
     required: true
     weight: 0.2
 
   - id: delete-removes-item-with-stable-ids
     type: command
-    command: rm -f .todo.json delete.out list.out && python todo.py add "First" >/dev/null && python todo.py add "Second" >/dev/null && python todo.py delete 1 > delete.out && grep -Fx "Deleted 1: First" delete.out && python todo.py list > list.out && grep -Fx "2. [ ] Second" list.out && ! grep -F "First" list.out
+    command: tmpdir=$(mktemp -d) && cp todo.py "$tmpdir"/todo.py && cd "$tmpdir" && python todo.py add "First" >/dev/null && python todo.py add "Second" >/dev/null && python todo.py delete 1 > delete.out && grep -Fx "Deleted 1: First" delete.out && python todo.py list > list.out && grep -Fx "2. [ ] Second" list.out && ! grep -F "First" list.out
     required: true
     weight: 0.2
 
   - id: invalid-id-exits-nonzero
     type: command
-    command: rm -f .todo.json err.out && python todo.py add "Only item" >/dev/null && ! python todo.py complete 99 >err.out 2>&1 && test -s err.out
+    command: tmpdir=$(mktemp -d) && cp todo.py "$tmpdir"/todo.py && cd "$tmpdir" && python todo.py add "Only item" >/dev/null && ! python todo.py complete 99 >err.out 2>&1 && test -s err.out
     required: true
     weight: 0.1
 
