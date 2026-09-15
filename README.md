@@ -1,5 +1,8 @@
 # SVDO Meter
 
+[![Rust CI](https://github.com/brianofrokk3r/svdo-meter/actions/workflows/rust-ci.yml/badge.svg)](https://github.com/brianofrokk3r/svdo-meter/actions/workflows/rust-ci.yml)
+[![Release Binaries](https://github.com/brianofrokk3r/svdo-meter/actions/workflows/release.yml/badge.svg)](https://github.com/brianofrokk3r/svdo-meter/actions/workflows/release.yml)
+
 SVDO Meter is an open-source telemetry and evaluation layer for AI coding agents. Measure execution, token usage, cost, sessions, tooling behavior, and repository alignment across Codex, Claude Code, and other coding agents.
 
 It associates a ticket/work identifier with an agent CLI run, invokes or resumes the selected harness, normalizes objective events where possible, and writes durable append-only telemetry locally. It is not an orchestration framework, ticketing system, model router, or remote connector.
