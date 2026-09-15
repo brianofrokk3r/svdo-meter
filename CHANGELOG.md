@@ -2,6 +2,10 @@
 
 ## 2026-09-15
 
+- Added CI secrets documentation for Codex, Claude Code, and OpenCode harness credentials, including `OPENAI_API_KEY`, optional `OPENAI_PROJECT_ID`, and `ANTHROPIC_API_KEY` guidance.
+- Documented that SVDO Meter shells out to harness CLIs and delegates provider authentication to the harness process environment instead of owning provider API communication directly.
+- Added Bitbucket Pipelines guidance for secured repository or workspace variables, measured `svdo-meter run` usage, eval/report commands, and `.svdo/meter/**` plus `.svdo/evals/**` artifacts.
+- Added GitHub Actions secret and workflow artifact references alongside the Bitbucket guidance, while keeping the README as a lightweight pointer to the new CI secrets documentation.
 - Added a label-grouped reporting example for a todo CLI due-date workflow, including `plan` and `implement` phase prompts, fixture telemetry, and a README walkthrough.
 - Added `examples/label-grouped-reporting/report-label-groups.sh` to summarize existing `svdo-meter report --label <LABEL> --format csv` output by workflow phase, including measured agent time and token totals.
 - Added `examples/label-grouped-reporting/run-plan-implement-report.sh` to run the planning phase, implementation phase, and reporting output end to end from one command.
