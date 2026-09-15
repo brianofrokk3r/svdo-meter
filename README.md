@@ -157,6 +157,18 @@ Prerequisites:
 - `claude` on `PATH` and authenticated when running the Claude Code harness for real work
 - `opencode` on `PATH` when running the OpenCode harness for real work
 
+## Harness API Keys and CI Secrets
+
+SVDO Meter does not currently own provider API communication. It shells out to the selected harness CLI and lets that child process read credentials from its environment. Configure and validate `codex`, `claude`, or `opencode` the same way you would before running that CLI directly.
+
+| Harness | Typical credential environment |
+|---|---|
+| Codex CLI | `OPENAI_API_KEY`; optional `OPENAI_PROJECT_ID` |
+| Claude Code CLI | `ANTHROPIC_API_KEY` |
+| OpenCode CLI | Provider-specific variables, commonly `OPENAI_API_KEY`, optional `OPENAI_PROJECT_ID`, or `ANTHROPIC_API_KEY` depending on the configured model provider |
+
+Never commit API keys, tokens, `.env` files, shell history, or generated credential files to the repository. For CI setup, secure-variable guidance, Bitbucket Pipelines, and GitHub Actions references, see [CI Secrets and Harness Credentials](docs/ci-secrets.md).
+
 Build the debug binary:
 
 ```bash
