@@ -1,0 +1,61 @@
+study: stopword-prompt-impact
+fixture: todo-cli
+default_ticket: STOPWORD-TODO
+recommended_repetitions_per_variant: 30
+metric_focus:
+  - output_tokens
+  - completion_status
+  - eval_score
+notes:
+  - All variants request the same todo.py feature scope.
+  - Wording changes are intended to vary stopword density, verbosity, and style.
+  - Run labels should include the variant id and repetition number, such as concise-baseline-001.
+variants:
+  - id: concise-baseline
+    name: Concise baseline
+    prompt_file: prompts/concise-baseline.md
+    stopword_profile: moderate
+    verbosity: concise
+    description: Direct task statement with ordinary technical prose and minimal framing.
+    expected_scope:
+      - add
+      - list
+      - complete
+      - delete
+
+  - id: telegraphic-low-stopword
+    name: Telegraphic low-stopword
+    prompt_file: prompts/telegraphic-low-stopword.md
+    stopword_profile: low
+    verbosity: terse
+    description: Fragment-style instructions with reduced connector words and articles.
+    expected_scope:
+      - add
+      - list
+      - complete
+      - delete
+
+  - id: stopword-heavy-guided
+    name: Stopword-heavy guided
+    prompt_file: prompts/stopword-heavy-guided.md
+    stopword_profile: high
+    verbosity: detailed
+    description: Equivalent requirements written with many articles, prepositions, and connective phrases.
+    expected_scope:
+      - add
+      - list
+      - complete
+      - delete
+
+  - id: polite-redundant-stopword
+    name: Polite redundant stopword
+    prompt_file: prompts/polite-redundant-stopword.md
+    stopword_profile: very-high
+    verbosity: verbose
+    description: Courteous and repetitive wording that preserves the same todo CLI acceptance target.
+    expected_scope:
+      - add
+      - list
+      - complete
+      - delete
+

@@ -1,4 +1,4 @@
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
@@ -1071,7 +1071,7 @@ impl CodexJudge {
             serde_json::to_string_pretty(request).context("failed to serialize judge request")?;
         let prompt = judge_prompt(&request_json);
         let config = CodexConfig::default();
-        let args = codex_argv(&config, Some(workspace), self.model.as_ref(), None, &prompt);
+        let args = codex_judge_argv(&config, Some(workspace), self.model.as_ref(), &prompt);
         let mut command = Command::new(&config.binary);
         let output = command
             .args(&args)
@@ -1091,6 +1091,18 @@ impl CodexJudge {
             model: self.model.as_ref().map(|model| model.as_str().to_owned()),
         })
     }
+}
+
+fn codex_judge_argv(
+    config: &CodexConfig,
+    workspace: Option<&Path>,
+    model: Option<&ModelName>,
+    prompt: &str,
+) -> Vec<OsString> {
+    let mut args = codex_argv(config, workspace, model, None, prompt);
+    let prompt_index = args.len().saturating_sub(1);
+    args.insert(prompt_index, OsString::from("--skip-git-repo-check"));
+    args
 }
 
 fn judge_prompt(request_json: &str) -> String {
@@ -2005,6 +2017,32 @@ threshold: 0.85
         assert_eq!(response.passed, Some(false));
         assert_eq!(response.violations, ["needs tighter CLI output"]);
         Ok(())
+    }
+
+    #[test]
+    fn codex_judge_arguments_skip_git_repo_check() {
+        let model = ModelName::new("gpt-5").unwrap_or_else(|err| panic!("{err}"));
+
+        let args = codex_judge_argv(
+            &CodexConfig::default(),
+            Some(Path::new("/tmp/eval workspace")),
+            Some(&model),
+            "Judge this",
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                OsString::from("exec"),
+                OsString::from("--json"),
+                OsString::from("-C"),
+                OsString::from("/tmp/eval workspace"),
+                OsString::from("--model"),
+                OsString::from("gpt-5"),
+                OsString::from("--skip-git-repo-check"),
+                OsString::from("Judge this"),
+            ]
+        );
     }
 
     #[test]

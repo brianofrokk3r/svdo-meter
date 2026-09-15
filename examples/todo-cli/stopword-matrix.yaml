@@ -1,0 +1,101 @@
+study: stopword-prompt-impact
+fixture: todo-cli
+default_ticket: STOPWORD-TODO
+default_harness: codex
+default_model: gpt-5.5
+default_repetitions_per_variant: 30
+label_template: "{variant_id}-{repetition:03d}"
+ticket_template: "{work_id}-{label}"
+
+description: >
+  Balanced run matrix for measuring how semantically equivalent todo-cli prompts
+  with different stopword density and wording style affect observed output token
+  generation in this environment.
+
+metric_focus:
+  primary: output_tokens
+  secondary:
+    - completion_status
+    - wall_time
+    - eval_score
+    - required_checks
+    - judge_score
+
+artifact_expectations:
+  persistent_output: study-output/<work-id>/
+  run_log: study-output/<work-id>/run.log
+  aggregate_workspace: <workspace>/
+  per_run_workspaces: <workspace>/runs/<label>.<suffix>/
+  telemetry: .svdo/meter/
+  eval_results: .svdo/evals/<label>-eval.json
+  reports:
+    - svdo-meter report --workspace <workspace>
+    - svdo-meter compare --workspace <workspace>
+    - ./report-stopword-study.sh STOPWORD-TODO --workspace <workspace> --baseline concise-baseline
+  saved_report_files:
+    - study-output/<work-id>/svdo-report.txt
+    - study-output/<work-id>/svdo-compare.txt
+    - study-output/<work-id>/study-summary.txt
+    - study-output/<work-id>/study-info.txt
+
+statistical_report:
+  command: ./report-stopword-study.sh STOPWORD-TODO --workspace <workspace> --baseline concise-baseline
+  grouping: run label prefix before the trailing numeric repetition, such as stopword-heavy-guided from stopword-heavy-guided-001
+  token_metric: output_tokens
+  summaries:
+    - sample size
+    - mean
+    - variance
+    - standard deviation
+    - min
+    - p50
+    - max
+    - completion rate
+    - eval score
+    - required checks
+    - violations
+  significance: >
+    Pair each variant against the configured baseline with a Welch-style 95%
+    confidence heuristic: abs(mean difference) > 1.96 *
+    sqrt(se_variant^2 + se_baseline^2). Treat the result as evidence from
+    this local environment, not a universal stopword claim.
+
+override_environment:
+  SVDO_STOPWORD_WORK: Override the ticket/work id.
+  SVDO_STOPWORD_WORKSPACE: Reuse a specific study workspace.
+  SVDO_STOPWORD_HARNESS: Override the harness, such as codex or opencode.
+  SVDO_STOPWORD_MODEL: Override the harness-specific model identifier.
+  SVDO_STOPWORD_REPETITIONS: Override repetitions per variant.
+  SVDO_STOPWORD_VARIANTS: Space-separated variant ids to include.
+  SVDO_STOPWORD_OUTPUT_ROOT: Override the persistent output root.
+  SVDO_STOPWORD_OUTPUT_DIR: Override the exact persistent output directory.
+  SVDO_STOPWORD_DRY_RUN: Set to 1 to print commands without executing agent runs.
+  SVDO_STOPWORD_RUN_EVALS: Set to 0 to skip per-run evals.
+  SVDO_STOPWORD_JUDGE: Set to 0 to skip passing harness and model to judge checks.
+  SVDO_METER_BIN: Override the svdo-meter executable path.
+
+cost_time_guidance:
+  smoke_test_repetitions: 1
+  recommended_repetitions_per_variant: 30
+  default_total_runs: 120
+  note: >
+    Run one repetition first to validate credentials and local setup. The default
+    30 repetitions per variant is intended for statistical comparison and can
+    take substantial time and provider budget.
+
+variants:
+  - id: concise-baseline
+    prompt_file: prompts/concise-baseline.md
+    repetitions: 30
+
+  - id: telegraphic-low-stopword
+    prompt_file: prompts/telegraphic-low-stopword.md
+    repetitions: 30
+
+  - id: stopword-heavy-guided
+    prompt_file: prompts/stopword-heavy-guided.md
+    repetitions: 30
+
+  - id: polite-redundant-stopword
+    prompt_file: prompts/polite-redundant-stopword.md
+    repetitions: 30

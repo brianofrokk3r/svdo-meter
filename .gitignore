@@ -6,8 +6,13 @@
 !.svdo/evals/**
 !.svdo/standards/
 !.svdo/standards/**
+!examples/**/.svdo/
+!examples/**/.svdo/evals/
+!examples/**/.svdo/evals/**
+!examples/**/.svdo/standards/
+!examples/**/.svdo/standards/**
 .specify
 target
 specs
-specs/*
 docs/internal/*
+examples/todo-cli/study-output/*
