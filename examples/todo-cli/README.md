@@ -107,7 +107,7 @@ Other useful overrides:
 - `SVDO_STOPWORD_OUTPUT_ROOT`: override the default persistent output root, `study-output`.
 - `SVDO_STOPWORD_OUTPUT_DIR`: override the exact directory for the run log and saved reports.
 - `SVDO_STOPWORD_RUN_EVALS=0`: skip per-run eval artifacts.
-- `SVDO_STOPWORD_JUDGE=0`: skip passing the selected harness and model to judge checks.
+- `SVDO_STOPWORD_JUDGE=1`: skip passing the selected harness and model to judge checks.
 - `SVDO_METER_BIN`: point at a local binary, such as `../../target/debug/svdo-meter`.
 
 Use `--dangerous-bypass` only in a disposable workspace where automatic edits and command execution are acceptable.
@@ -137,3 +137,24 @@ svdo-meter compare STOPWORD-TODO --workspace .
 `report-stopword-study.sh` groups runs by the label prefix before the trailing numeric repetition suffix. For example, `stopword-heavy-guided-001` contributes to the `stopword-heavy-guided` variant. The script analyzes observed telemetry `output_tokens`, then prints sample size, mean, variance, standard deviation, min/p50/max, completion rate, eval score, judge score, required checks, violations, and pairwise differences from the baseline. Its significance line uses a Welch-style 95% confidence heuristic, so interpret it as a reproducible local measurement for this environment rather than universal proof about stopwords.
 
 The stopword-impact parent study can copy this fixture into temporary workspaces, swap in prompt variants, and label runs by variant and repetition while preserving the same target behavior.
+
+```
+  SVDO Stopword Study Report - STOPWORD-TODO-20260915-003931
+  ================================================
+  Metric: output_tokens
+  Ticket match: exact work id or per-run ticket id prefixed by work id
+  Grouping: run label prefix before trailing numeric repetition
+  Significance: Welch-style 95% confidence heuristic; local environment only.
+
+  Variant                    Runs  Token n  Mean output  Variance  Std dev  Min / p50 / max       Completion    Eval  Judge  Required  Violations
+  -------------------------  ----  -------  -----------  --------  -------  --------------------  ------------  ----  -----  --------  ----------
+  concise-baseline           30    30       2758.9       732666.0  856.0    1602 / 2634.0 / 5384  30/30 (100%)  .95   .00    150/150   60
+  polite-redundant-stopword  30    30       3222.3       501780.4  708.4    1761 / 3410.0 / 4454  30/30 (100%)  .95   .00    150/150   60
+  stopword-heavy-guided      30    30       3033.9       727488.3  852.9    1609 / 3159.0 / 4875  30/30 (100%)  .95   .00    150/150   60
+  telegraphic-low-stopword   30    30       2354.8       291775.5  540.2    1612 / 2254.5 / 3450  30/30 (100%)  .95   .00    150/150   60
+
+  Comparisons vs baseline: concise-baseline
+  polite-redundant-stopword: mean diff 463.4, significant by heuristic
+  stopword-heavy-guided: mean diff 275.0, not significant by heuristic
+  telegraphic-low-stopword: mean diff -404.1, significant by heuristic
+```
