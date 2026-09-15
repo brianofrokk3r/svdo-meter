@@ -2,6 +2,38 @@
 
 This page keeps fuller runnable examples out of the README while preserving copy-pasteable workflows.
 
+## Label-Grouped Reporting: Plan vs Implement
+
+The label-grouped reporting example demonstrates a small feature workflow where one measured run is labeled `plan` and a second measured run is labeled `implement`.
+
+```text
+svdo-meter run --label plan -> svdo-meter run --label implement -> svdo-meter report --label ...
+```
+
+It uses a realistic todo CLI follow-up task: add due-date support after first asking the agent to write a focused plan. The example includes fixture telemetry, phase prompts, and a helper that compares time and tokens by label using current `svdo-meter report --label <LABEL> --format csv` behavior.
+
+Try the fixture-backed report from the repository root:
+
+```bash
+./examples/label-grouped-reporting/report-label-groups.sh
+```
+
+Or run the planning phase, implementation phase, and reports end to end:
+
+```bash
+./examples/label-grouped-reporting/run-plan-implement-report.sh
+```
+
+Then inspect the underlying SVDO Meter reports:
+
+```bash
+svdo-meter report LABEL-TODO-DUEDATES --workspace examples/label-grouped-reporting
+svdo-meter report LABEL-TODO-DUEDATES --label plan --workspace examples/label-grouped-reporting
+svdo-meter report LABEL-TODO-DUEDATES --label implement --workspace examples/label-grouped-reporting
+```
+
+The report shows how much measured agent time belongs to planning versus implementation for the same work id. Read `examples/label-grouped-reporting/README.md` for the live-run walkthrough.
+
 ## Calculator Benchmark: Codex vs OpenCode
 
 The calculator example exercises the full production flow with a small deterministic task:

@@ -15,4 +15,4 @@
 target
 specs
 docs/internal/*
-examples/todo-cli/study-output/*
+examples/**/study-output/*

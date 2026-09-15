@@ -51,6 +51,7 @@ pub fn harness_config(
                 },
                 yolo: args.codex_yolo
                     || execution_permission == ExecutionPermissionMode::DangerousBypass,
+                skip_git_repo_check: args.codex_skip_git_repo_check,
                 config_overrides,
                 ..CodexConfig::default()
             })
@@ -139,6 +140,7 @@ fn has_codex_options(args: &RunArgs) -> bool {
         || args.codex_sandbox.is_some()
         || args.codex_approve_for_me
         || args.codex_yolo
+        || args.codex_skip_git_repo_check
         || !args.codex_config.is_empty()
 }
 
@@ -274,6 +276,7 @@ mod tests {
         args.codex_sandbox = Some(meter_core::CodexSandboxMode::WorkspaceWrite);
         args.codex_approve_for_me = true;
         args.codex_yolo = true;
+        args.codex_skip_git_repo_check = true;
         args.codex_config = vec![
             "model_reasoning_effort=high".to_owned(),
             "features.experimental=true".to_owned(),
@@ -289,6 +292,7 @@ mod tests {
                 sandbox: Some(meter_core::CodexSandboxMode::WorkspaceWrite),
                 approval_mode: CodexApprovalMode::ApproveForMe,
                 yolo: true,
+                skip_git_repo_check: true,
                 config_overrides: vec![
                     CodexConfigOverride::new("model_reasoning_effort", "high"),
                     CodexConfigOverride::new("features.experimental", "true"),
@@ -436,7 +440,7 @@ mod tests {
     #[test]
     fn rejects_codex_options_for_non_codex_harness() {
         let mut args = run_args(HarnessKind::Claude);
-        args.codex_yolo = true;
+        args.codex_skip_git_repo_check = true;
 
         let error = match harness_config(&args, None) {
             Ok(_) => panic!("expected harness config error"),
@@ -515,6 +519,7 @@ mod tests {
             codex_sandbox: None,
             codex_approve_for_me: false,
             codex_yolo: false,
+            codex_skip_git_repo_check: false,
             codex_config: Vec::new(),
             opencode_agent: None,
         }

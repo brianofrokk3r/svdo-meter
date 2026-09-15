@@ -541,6 +541,7 @@ mod tests {
             codex_sandbox: None,
             codex_approve_for_me: false,
             codex_yolo: false,
+            codex_skip_git_repo_check: false,
             codex_config: Vec::new(),
             opencode_agent: None,
         }

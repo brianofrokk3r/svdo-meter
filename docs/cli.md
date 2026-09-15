@@ -182,6 +182,7 @@ Codex-specific options, valid only with `--harness codex`:
 | `--codex-sandbox <MODE>` | Passes `--sandbox <MODE>` to Codex. Supported values: `read-only`, `workspace-write`, `danger-full-access`. |
 | `--codex-approve-for-me` | Passes `--approve-for-me` to Codex. |
 | `--codex-yolo` | Compatibility spelling for Codex's dangerous `--dangerously-bypass-approvals-and-sandbox` flag. Also records canonical `dangerous-bypass` execution permission telemetry. |
+| `--codex-skip-git-repo-check` | Passes `--skip-git-repo-check` to Codex for disposable or otherwise intentionally untrusted workspaces. |
 | `--codex-config <key=value>` | Passes a repeated `--config <key=value>` override to Codex. Keys and values must be non-empty. |
 
 OpenCode-specific options, valid only with `--harness opencode`:
@@ -363,7 +364,7 @@ Command checks report success or failure, exit status, duration, and captured fa
 
 Judge checks are represented in the schema and result model. Without `--harness` or `--judge-command`, judge checks resolve their referenced standards and report a skipped result with a clear reason. Skipped judge checks do not block deterministic command checks from running.
 
-When `--harness codex` is set, each judge check sends the eval task and resolved standard contents to `codex exec --json --skip-git-repo-check`, asks the model to return only a JSON score, and reads the JSON score from the Codex output stream. The skip flag is applied only to eval judge runs so disposable, non-git eval workspaces can be judged without changing normal Codex harness runs. When `--harness claude` is set, the same judge request is sent through `claude -p` with `--output-format stream-json`. When `--harness opencode` is set, the same judge request is sent through `opencode run --format json`.
+When `--harness codex` is set, each judge check sends the eval task and resolved standard contents to `codex exec --json --skip-git-repo-check`, asks the model to return only a JSON score, and reads the JSON score from the Codex output stream. Eval judge runs always use Codex's skip flag so disposable, non-git eval workspaces can be judged; normal `svdo-meter run --harness codex` invocations use the same Codex flag only when `--codex-skip-git-repo-check` is supplied. When `--harness claude` is set, the same judge request is sent through `claude -p` with `--output-format stream-json`. When `--harness opencode` is set, the same judge request is sent through `opencode run --format json`.
 
 Telemetry checks read local JSONL telemetry from `.svdo/meter/` in the selected workspace and evaluate the latest run. They match canonical `event_type` values and can further require a matching `tool_name` for tool events. A telemetry check fails with a clear reason when telemetry is missing, no matching events are found, or the matching count is below `min_count`.
 
@@ -574,7 +575,7 @@ The Codex adapter invokes the CLI with explicit process arguments, not a shell c
 First run shape:
 
 ```text
-codex exec --json -C <workspace> [--model <model>] [--profile <profile>] [--sandbox <mode>] [--approve-for-me] [--dangerously-bypass-approvals-and-sandbox] [--config <key=value>...] <prompt>
+codex exec --json -C <workspace> [--model <model>] [--profile <profile>] [--sandbox <mode>] [--approve-for-me] [--dangerously-bypass-approvals-and-sandbox] [--skip-git-repo-check] [--config <key=value>...] <prompt>
 ```
 
 When `--prompt-file <path>` is used, SVDO Meter reads the file and passes the resolved text as `<prompt>`.
