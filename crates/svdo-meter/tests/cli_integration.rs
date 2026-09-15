@@ -936,8 +936,8 @@ fn todo_cli_stopword_matrix_documents_runnable_variants() {
     assert!(TODO_CLI_STOPWORD_MATRIX.contains("default_model: gpt-5.5"));
     assert!(TODO_CLI_STOPWORD_MATRIX.contains("default_repetitions_per_variant: 30"));
     assert!(TODO_CLI_STOPWORD_MATRIX.contains("primary: output_tokens"));
-    assert!(TODO_CLI_STOPWORD_MATRIX.contains("svdo-meter report STOPWORD-TODO"));
-    assert!(TODO_CLI_STOPWORD_MATRIX.contains("svdo-meter compare STOPWORD-TODO"));
+    assert!(TODO_CLI_STOPWORD_MATRIX.contains("svdo-meter report --workspace <workspace>"));
+    assert!(TODO_CLI_STOPWORD_MATRIX.contains("svdo-meter compare --workspace <workspace>"));
     assert!(TODO_CLI_STOPWORD_MATRIX.contains("./report-stopword-study.sh STOPWORD-TODO"));
     assert!(TODO_CLI_STOPWORD_MATRIX.contains("Welch-style 95%"));
 
