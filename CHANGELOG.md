@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-15
+
+- Added a label-grouped reporting example for a todo CLI due-date workflow, including `plan` and `implement` phase prompts, fixture telemetry, and a README walkthrough.
+- Added `examples/label-grouped-reporting/report-label-groups.sh` to summarize existing `svdo-meter report --label <LABEL> --format csv` output by workflow phase, including measured agent time and token totals.
+- Linked the new reporting example from the README and examples guide so users can find the fixture-backed walkthrough.
+
 ## 2026-09-14
 
 - Added first-class `telemetry` eval checks for `svdo-meter eval run`, supporting `event_type`, optional `tool_name`, and `min_count` assertions against local `.svdo/meter/*.jsonl` telemetry.
