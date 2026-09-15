@@ -90,8 +90,8 @@ Run the default OpenAI GPT-5.5 study:
 The helper creates a disposable workspace, copies the fixture eval and judge standard into that workspace, runs each variant with `svdo-meter run --prompt-file`, captures telemetry under `.svdo/meter/`, writes per-run eval JSON under `.svdo/evals/`, then renders:
 
 ```bash
-svdo-meter report "$SVDO_STOPWORD_WORK" --workspace "$SVDO_STOPWORD_WORKSPACE"
-svdo-meter compare "$SVDO_STOPWORD_WORK" --workspace "$SVDO_STOPWORD_WORKSPACE"
+svdo-meter report --workspace "$SVDO_STOPWORD_WORKSPACE"
+svdo-meter compare --workspace "$SVDO_STOPWORD_WORKSPACE"
 ./report-stopword-study.sh "$SVDO_STOPWORD_WORK" --workspace "$SVDO_STOPWORD_WORKSPACE" --baseline concise-baseline
 ```
 
@@ -116,7 +116,7 @@ svdo-meter compare STOPWORD-TODO --workspace .
 ./report-stopword-study.sh STOPWORD-TODO --workspace . --baseline concise-baseline
 ```
 
-The fixture documents harness and model overrides in `examples/todo-cli/README.md`. Judge checks are included but remain advisory unless you run the eval with `--harness` and `--model` or provide `--judge-command`.
+The fixture documents harness and model overrides in `examples/todo-cli/README.md`. The matrix runner passes the selected harness and model to judge checks by default, while standalone eval commands still need `--harness` and `--model` or `--judge-command` to run the judge.
 
 ### Configuration
 
@@ -129,7 +129,7 @@ Use environment variables to adapt the matrix without editing the helper script:
 - `SVDO_STOPWORD_WORK`: set the exact ticket/work id used by report commands.
 - `SVDO_STOPWORD_WORKSPACE`: reuse a specific disposable workspace.
 - `SVDO_STOPWORD_RUN_EVALS=0`: skip per-run eval artifacts when you only want telemetry.
-- `SVDO_STOPWORD_JUDGE=1`: pass the selected harness and model to LLM judge checks.
+- `SVDO_STOPWORD_JUDGE=0`: skip passing the selected harness and model to LLM judge checks.
 - `SVDO_METER_BIN`: point at a local binary, such as `../../target/debug/svdo-meter`.
 
 For example:
@@ -150,7 +150,7 @@ Use `--dangerous-bypass` only in a disposable workspace where automatic edits an
 
 ### Interpreting Results
 
-The example `report-stopword-study.sh` script groups runs by the prompt variant label prefix before the trailing repetition suffix. For example, `stopword-heavy-guided-001` contributes to the `stopword-heavy-guided` group. The primary measured token metric is telemetry `output_tokens`.
+The matrix gives each repetition a per-run ticket id by appending the run label to the study id, for example `STOPWORD-TODO-20260914-212852-stopword-heavy-guided-001`. This prevents automatic session reuse across repetitions while preserving a common study prefix. The example `report-stopword-study.sh` script matches that ticket prefix and groups runs by the prompt variant label prefix before the trailing repetition suffix. For example, `stopword-heavy-guided-001` contributes to the `stopword-heavy-guided` group. The primary measured token metric is telemetry `output_tokens`.
 
 For each variant, the study summary script reads SVDO Meter telemetry and label-named eval artifacts, then summarizes sample size, mean, variance, standard deviation, min, p50, max, completion rate, eval score, judge score, required checks, and violations. It compares each variant with the `concise-baseline` group using a Welch-style 95% confidence heuristic. Read that significance line as a practical confidence signal for this specific harness, model, machine, prompt set, and time period.
 

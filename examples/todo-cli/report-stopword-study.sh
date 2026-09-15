@@ -55,8 +55,10 @@ def token_usage(record):
 
 def terminal_runs(workspace, work):
     runs = {}
+    work_prefix = f"{work}-"
     for record in telemetry_records(workspace):
-        if record.get("ticket_id") != work:
+        ticket_id = record.get("ticket_id") or ""
+        if ticket_id != work and not ticket_id.startswith(work_prefix):
             continue
         event_type = record.get("event_type")
         if event_type not in {"run.completed", "run.failed"}:
@@ -259,6 +261,7 @@ def main():
     print(f"SVDO Stopword Study Report - {args.work}")
     print("=" * 48)
     print("Metric: output_tokens")
+    print("Ticket match: exact work id or per-run ticket id prefixed by work id")
     print("Grouping: run label prefix before trailing numeric repetition")
     print(
         "Significance: Welch-style 95% confidence heuristic; local environment only."

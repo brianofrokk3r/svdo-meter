@@ -46,6 +46,7 @@ The reproducible matrix is defined in `stopword-matrix.yaml`. It defaults to:
 - variants: all four prompt variants in `prompts/variants.yaml`
 - repetitions: 30 per variant, 120 agent runs total
 - labels: `<variant-id>-NNN`, such as `concise-baseline-001`
+- per-run ticket ids: `<work-id>-<label>`, such as `STOPWORD-TODO-20260914-233007-concise-baseline-001`
 - primary metric: observed `output_tokens` in svdo-meter telemetry
 
 Preview the full command matrix without running agents:
@@ -66,12 +67,22 @@ Run the full default matrix from this fixture directory:
 ./run-stopword-matrix.sh
 ```
 
-The script creates a disposable workspace, runs each variant with `svdo-meter run --prompt-file`, preserves telemetry under `.svdo/meter/`, writes per-run eval JSON under `.svdo/evals/`, then renders:
+The script creates a disposable aggregate workspace and a fresh child workspace for each agent attempt under `runs/<label>.*`. Each attempt also gets a distinct ticket id, `<work-id>-<label>`, so svdo-meter's session auto-discovery cannot resume a previous Codex session for the same work item. Each attempt runs with `svdo-meter run --prompt-file` in its own child workspace, then the script copies telemetry into the aggregate `.svdo/meter/` directory and per-run eval JSON into aggregate `.svdo/evals/` before rendering:
 
 ```bash
-svdo-meter report "$SVDO_STOPWORD_WORK" --workspace "$SVDO_STOPWORD_WORKSPACE"
-svdo-meter compare "$SVDO_STOPWORD_WORK" --workspace "$SVDO_STOPWORD_WORKSPACE"
+svdo-meter report --workspace "$SVDO_STOPWORD_WORKSPACE"
+svdo-meter compare --workspace "$SVDO_STOPWORD_WORKSPACE"
 ./report-stopword-study.sh "$SVDO_STOPWORD_WORK" --workspace "$SVDO_STOPWORD_WORKSPACE" --baseline concise-baseline
+```
+
+It also saves a persistent transcript and report files under `study-output/<work-id>/` in this fixture directory, so clearing the terminal does not discard a long run's output:
+
+```text
+study-output/<work-id>/run.log
+study-output/<work-id>/svdo-report.txt
+study-output/<work-id>/svdo-compare.txt
+study-output/<work-id>/study-summary.txt
+study-output/<work-id>/study-info.txt
 ```
 
 Eval artifacts are named with the run label, such as `.svdo/evals/concise-baseline-001-eval.json`, so the example study summary script can attach deterministic and judge quality results to the matching telemetry run.
@@ -91,10 +102,12 @@ SVDO_STOPWORD_REPETITIONS=1 \
 Other useful overrides:
 
 - `SVDO_STOPWORD_WORK`: set the exact ticket/work id.
-- `SVDO_STOPWORD_WORKSPACE`: reuse a specific disposable workspace.
+- `SVDO_STOPWORD_WORKSPACE`: reuse a specific disposable aggregate workspace.
 - `SVDO_STOPWORD_VARIANTS`: run a subset, for example `concise-baseline stopword-heavy-guided`.
+- `SVDO_STOPWORD_OUTPUT_ROOT`: override the default persistent output root, `study-output`.
+- `SVDO_STOPWORD_OUTPUT_DIR`: override the exact directory for the run log and saved reports.
 - `SVDO_STOPWORD_RUN_EVALS=0`: skip per-run eval artifacts.
-- `SVDO_STOPWORD_JUDGE=1`: pass the selected harness and model to judge checks instead of leaving judge checks skipped.
+- `SVDO_STOPWORD_JUDGE=0`: skip passing the selected harness and model to judge checks.
 - `SVDO_METER_BIN`: point at a local binary, such as `../../target/debug/svdo-meter`.
 
 Use `--dangerous-bypass` only in a disposable workspace where automatic edits and command execution are acceptable.
