@@ -23,7 +23,6 @@ const MAX_JUDGE_OUTPUT_BYTES: usize = 1024 * 1024;
 const DEFAULT_TELEMETRY_MIN_COUNT: u64 = 1;
 const MAX_TYPESAFE_SNAPSHOT_BYTES: usize = 96 * 1024;
 const MAX_TYPESAFE_SOURCE_SNAPSHOT_BYTES: usize = 64 * 1024;
-const TYPESAFE_PASSING_NORMALIZED_SCORE: f64 = 0.75;
 const TYPESAFE_MAX_ATTEMPTS: u32 = 3;
 const TYPESAFE_INITIAL_BACKOFF: Duration = Duration::from_millis(250);
 const DEFAULT_TYPESAFE_MODEL: &str = "jev-latest";
@@ -60,6 +59,7 @@ pub struct CheckDefinition {
     pub command: Option<String>,
     pub required: bool,
     pub weight: f64,
+    pub min_score: Option<f64>,
     pub standard: Option<String>,
     pub rubric: Option<String>,
     pub event_type: Option<String>,
@@ -1209,6 +1209,7 @@ fn run_typesafe_judge_checks(
             response.usage.as_ref(),
             duration_ms,
             &judge.model,
+            definition.threshold,
         )?;
         results.insert(check.id.clone(), result);
     }
@@ -1279,6 +1280,7 @@ fn normalize_typesafe_check_result(
     usage: Option<&TypeSafeUsage>,
     duration_ms: u128,
     requested_model: &str,
+    default_passing_score: f64,
 ) -> anyhow::Result<CheckResult> {
     if answer.answer_type != "score" {
         bail!(
@@ -1303,12 +1305,13 @@ fn normalize_typesafe_check_result(
         );
     }
     let normalized_score = answer.score / top_level as f64;
-    let passed = normalized_score >= TYPESAFE_PASSING_NORMALIZED_SCORE;
+    let passing_score = check.min_score.unwrap_or(default_passing_score);
+    let passed = normalized_score >= passing_score;
     let mut violations = Vec::new();
     if !passed {
         violations.push(format!(
             "TypeSafe score {:.2} normalized to {:.2} is below passing threshold {:.2}",
-            answer.score, normalized_score, TYPESAFE_PASSING_NORMALIZED_SCORE
+            answer.score, normalized_score, passing_score
         ));
     }
 
@@ -2328,6 +2331,16 @@ fn validate_definition(definition: &EvalDefinition, path: &Path) -> anyhow::Resu
             );
         }
         if check
+            .min_score
+            .is_some_and(|min_score| !(0.0..=1.0).contains(&min_score))
+        {
+            bail!(
+                "eval definition `{}` check `{}` min_score must be between 0.0 and 1.0",
+                path.display(),
+                check.id
+            );
+        }
+        if check
             .rubric
             .as_deref()
             .is_some_and(|value| value.trim().is_empty())
@@ -2495,6 +2508,7 @@ fn parse_checks(lines: &[&str], mut index: usize) -> anyhow::Result<(Vec<CheckDe
                 command: None,
                 required: false,
                 weight: default_weight(),
+                min_score: None,
                 standard: None,
                 rubric: None,
                 event_type: None,
@@ -2545,6 +2559,9 @@ fn apply_check_field(check: &mut CheckDefinition, field: &str) -> anyhow::Result
             };
         }
         "weight" => check.weight = value.parse::<f64>().context("weight must be a number")?,
+        "min_score" => {
+            check.min_score = Some(value.parse::<f64>().context("min_score must be a number")?)
+        }
         "standard" => check.standard = Some(value.to_owned()),
         "rubric" => check.rubric = Some(value.to_owned()),
         "event_type" => check.event_type = Some(value.to_owned()),
@@ -2885,6 +2902,7 @@ checks:
     type: judge
     standard: api-architecture
     rubric: architecture-alignment
+    min_score: 0.75
     weight: 0.4
   - id: requires-apply-patch
     type: telemetry
@@ -2901,6 +2919,7 @@ threshold: 0.85
         assert!(definition.checks[0].required);
         assert_eq!(definition.checks[1].check_type, CheckType::Judge);
         assert_eq!(definition.checks[1].weight, 0.4);
+        assert_eq!(definition.checks[1].min_score, Some(0.75));
         assert_eq!(
             definition.checks[1].rubric.as_deref(),
             Some("architecture-alignment")
@@ -2964,6 +2983,7 @@ checks:
                 command: None,
                 required: false,
                 weight: 1.0,
+                min_score: None,
                 standard: None,
                 rubric: None,
                 event_type: None,
@@ -3046,6 +3066,7 @@ checks:
                 command: Some("printf ok".to_owned()),
                 required: true,
                 weight: 1.0,
+                min_score: None,
                 standard: None,
                 rubric: None,
                 event_type: None,
@@ -3078,6 +3099,7 @@ checks:
                 command: None,
                 required: false,
                 weight: 1.0,
+                min_score: None,
                 standard: None,
                 rubric: None,
                 event_type: None,
@@ -3399,6 +3421,7 @@ criteria:
             command: None,
             required: true,
             weight: 0.5,
+            min_score: None,
             standard: Some("api-architecture".to_owned()),
             rubric: Some("architecture-alignment".to_owned()),
             event_type: None,
@@ -3435,6 +3458,7 @@ criteria:
             Some(&usage),
             25,
             "jev-latest",
+            0.75,
         )?;
 
         assert_eq!(result.score, Some(0.75));
@@ -3466,6 +3490,7 @@ criteria:
             command: None,
             required: true,
             weight: 0.4,
+            min_score: Some(0.85),
             standard: Some("calculator-quality".to_owned()),
             rubric: Some("calculator-implementation".to_owned()),
             event_type: None,
@@ -3502,6 +3527,7 @@ criteria:
             None,
             973,
             "jev-latest",
+            0.9,
         )?;
 
         assert_eq!(result.outcome, CheckOutcome::Passed);
@@ -3518,6 +3544,7 @@ criteria:
             command: None,
             required: true,
             weight: 0.4,
+            min_score: Some(0.85),
             standard: Some("calculator-quality".to_owned()),
             rubric: Some("calculator-implementation".to_owned()),
             event_type: None,
@@ -3540,8 +3567,9 @@ criteria:
             legend: BTreeMap::new(),
         };
 
-        let result =
-            normalize_typesafe_check_result(&check, &prepared, &answer, None, None, 100, "jev")?;
+        let result = normalize_typesafe_check_result(
+            &check, &prepared, &answer, None, None, 100, "jev", 0.5,
+        )?;
 
         assert_eq!(result.score, Some(0.25));
         assert_eq!(result.outcome, CheckOutcome::Failed);
@@ -3689,6 +3717,7 @@ criteria:
                     command: Some("printf ok".to_owned()),
                     required: true,
                     weight: 1.0,
+                    min_score: None,
                     standard: None,
                     rubric: None,
                     event_type: None,
@@ -3701,6 +3730,7 @@ criteria:
                     command: None,
                     required: false,
                     weight: 1.0,
+                    min_score: None,
                     standard: None,
                     rubric: None,
                     event_type: None,
@@ -4029,6 +4059,7 @@ criteria:
                 command: None,
                 required: true,
                 weight: 1.0,
+                min_score: None,
                 standard: None,
                 rubric: None,
                 event_type: Some("tool.started".to_owned()),
