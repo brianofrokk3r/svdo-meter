@@ -290,6 +290,31 @@ svdo-meter eval run --harness claude --model sonnet
 svdo-meter eval run --harness opencode --model github-copilot/gpt-5
 ```
 
+Run judge checks with TypeSafe AI Score:
+
+```bash
+export TYPESAFE_API_KEY=...
+svdo-meter eval run api-contract --judge-backend typesafe
+svdo-meter eval run --judge-backend typesafe --typesafe-model jev-latest
+```
+
+TypeSafe can also be the eval's default judge backend:
+
+```yaml
+judge:
+  backend: typesafe
+  model: jev-latest
+  api_key_env: TYPESAFE_API_KEY
+```
+
+Structured rubrics live separately from standards:
+
+```text
+.svdo/evals/api-contract.yaml
+.svdo/standards/api-architecture.md
+.svdo/rubrics/architecture-alignment.yaml
+```
+
 ### Arguments
 
 | Argument | Required | Description |
@@ -300,6 +325,10 @@ svdo-meter eval run --harness opencode --model github-copilot/gpt-5
 | `--model <MODEL>` | No | Model passed to the judge harness, such as `gpt-5`. Requires `--harness`. |
 | `--judge-command <PROGRAM>` | No | Custom program used for `type: judge` checks. Receives the judge request JSON path as its final argument. |
 | `--judge-arg <ARG>` | No | Extra argument passed to `--judge-command` before the judge request path. Repeat for multiple arguments. |
+| `--judge-backend typesafe` | No | Uses TypeSafe AI System One Score questions for `type: judge` checks instead of a local LLM judge harness. |
+| `--typesafe-model <MODEL>` | No | TypeSafe System One model. Defaults to `jev-latest`. |
+| `--typesafe-api-key-env <ENV>` | No | Environment variable containing the TypeSafe API key. Defaults to `TYPESAFE_API_KEY`. |
+| `--typesafe-url <URL>` | No | TypeSafe System One endpoint. Defaults to `https://api.typesafe.ai/v1/systemone`. |
 | `--format <FORMAT>` | No | Output format. Supported values: `terminal`, `json`, `csv`. Defaults to `terminal`. |
 
 ### Eval Definitions
@@ -310,8 +339,18 @@ Eval definitions are YAML files. Supported top-level fields:
 |---|---:|---|
 | `id` | Yes | Stable eval identifier. A requested `<EVAL>` can match this value. |
 | `task` | Yes | Human-readable task or objective being evaluated. |
+| `judge` | No | Default judge backend configuration for `type: judge` checks. CLI judge options override this block. |
 | `checks` | Yes | Ordered list of command, judge, or telemetry checks. |
 | `threshold` | No | Minimum aggregate score required to pass. Defaults to `1.0`. |
+
+Supported `judge` fields:
+
+| Field | Required | Description |
+|---|---:|---|
+| `backend` | Yes | Judge backend for the eval. Supported value: `typesafe`. |
+| `model` | No | TypeSafe System One model. Defaults to `jev-latest`. |
+| `api_key_env` | No | Environment variable containing the TypeSafe API key. Defaults to `TYPESAFE_API_KEY`. |
+| `url` | No | TypeSafe System One endpoint. Defaults to `https://api.typesafe.ai/v1/systemone`. |
 
 Supported check fields:
 
@@ -323,6 +362,7 @@ Supported check fields:
 | `required` | No | When `true`, a failed check hard-fails the eval regardless of aggregate score. Defaults to `false`. |
 | `weight` | No | Numeric weight used in the aggregate score. Defaults to `1.0`. |
 | `standard` | No | Referenced standard id or file for judge checks. Resolved from `.svdo/standards/`. |
+| `rubric` | No | Structured grading rubric for judge checks. Resolved from `.svdo/rubrics/<name>.yaml` or `.svdo/standards/<name>.rubric.yaml`. TypeSafe uses it as Score instructions and ordered criteria. Other judge backends receive it as additional request context. |
 | `event_type` | Yes for `telemetry` | Canonical telemetry event name to match, such as `tool.started`. |
 | `tool_name` | No | Tool name to match for telemetry tool events, such as `apply_patch`. |
 | `min_count` | No | Minimum matching telemetry event count required to pass. Defaults to `1`. |
@@ -334,6 +374,10 @@ id: add-account-endpoint
 
 task: |
   Add GET /accounts/{account_id}.
+
+judge:
+  backend: typesafe
+  model: jev-latest
 
 checks:
   - id: tests
@@ -349,6 +393,7 @@ checks:
   - id: architecture
     type: judge
     standard: api-architecture
+    rubric: architecture-alignment
     weight: 0.4
 
   - id: requires-apply-patch
@@ -362,9 +407,33 @@ threshold: 0.85
 
 Command checks report success or failure, exit status, duration, and captured failure output. Non-required command checks contribute to the weighted score. Required command check failures cause the eval to fail even when the weighted score is above the threshold.
 
+A rubric file defines the grading instructions and ordered score levels:
+
+```yaml
+instructions: |
+  Evaluate how well the implementation follows the API architecture standard.
+criteria:
+  - No meaningful alignment with the standard.
+  - Partial alignment with major gaps.
+  - Mostly aligned with minor issues.
+  - Fully aligned with the standard.
+```
+
+Rubric criteria must define at least two and no more than ten ordered levels. For TypeSafe, these become the Score question `criteria`; the raw TypeSafe score is normalized from `0..len(criteria)-1` into the existing `0.0..1.0` eval score.
+
 Judge checks are represented in the schema and result model. Without `--harness` or `--judge-command`, judge checks resolve their referenced standards and report a skipped result with a clear reason. Skipped judge checks do not block deterministic command checks from running.
 
 When `--harness codex` is set, each judge check sends the eval task and resolved standard contents to `codex exec --json --skip-git-repo-check`, asks the model to return only a JSON score, and reads the JSON score from the Codex output stream. Eval judge runs always use Codex's skip flag so disposable, non-git eval workspaces can be judged; normal `svdo-meter run --harness codex` invocations use the same Codex flag only when `--codex-skip-git-repo-check` is supplied. When `--harness claude` is set, the same judge request is sent through `claude -p` with `--output-format stream-json`. When `--harness opencode` is set, the same judge request is sent through `opencode run --format json`.
+
+When `--judge-backend typesafe` is set, or when an eval definition includes `judge: backend: typesafe` and no CLI judge is selected, SVDO Meter sends one TypeSafe System One request for all judge checks in the eval. CLI judge settings take precedence over the eval file so the same eval can still be compared against `--harness codex`, `--harness claude`, `--harness opencode`, `--judge-command`, or a different TypeSafe model. Each check becomes a structured Score question:
+
+- `type: "score"`
+- `instructions` naming the eval and check being judged
+- ordered `criteria` with five satisfaction levels from no evidence to complete satisfaction
+
+The TypeSafe request `state` includes the eval task, each judge check's referenced standard contents, optional rubric definition, and a bounded local git snapshot (`status`, `diff --stat`, and `diff`). Markdown standards are not sent as markdown-only prompts; they become structured state. Rubrics become the Score question instructions and ordered criteria. When a judge check omits `rubric`, SVDO Meter uses a generic five-level fallback rubric so existing evals remain runnable. The existing eval check `weight` values remain the only local weights used when the normalized TypeSafe scores are aggregated.
+
+TypeSafe Score answers use a level scale from `0` through `len(criteria) - 1`. SVDO Meter normalizes that score to `0.0` through `1.0` for the existing eval aggregate while preserving TypeSafe metadata in JSON output: provider `typesafe`, model, raw score, normalized score, confidence, probabilities, legend/criteria mapping, and usage tokens when returned. Missing or empty TypeSafe API key configuration fails before a provider call with an actionable message naming the expected environment variable.
 
 Telemetry checks read local JSONL telemetry from `.svdo/meter/` in the selected workspace and evaluate the latest run. They match canonical `event_type` values and can further require a matching `tool_name` for tool events. A telemetry check fails with a clear reason when telemetry is missing, no matching events are found, or the matching count is below `min_count`.
 

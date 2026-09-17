@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io::{ErrorKind, Read};
@@ -16,18 +17,36 @@ use meter_core::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::cli::ReportFormat;
+use crate::cli::{JudgeBackend, ReportFormat};
 
 const MAX_JUDGE_OUTPUT_BYTES: usize = 1024 * 1024;
 const DEFAULT_TELEMETRY_MIN_COUNT: u64 = 1;
+const MAX_TYPESAFE_SNAPSHOT_BYTES: usize = 96 * 1024;
+const DEFAULT_TYPESAFE_MODEL: &str = "jev-latest";
+const DEFAULT_TYPESAFE_API_KEY_ENV: &str = "TYPESAFE_API_KEY";
+const DEFAULT_TYPESAFE_URL: &str = "https://api.typesafe.ai/v1/systemone";
 
 #[derive(Debug, Clone)]
 pub struct EvalDefinition {
     pub id: String,
     pub task: String,
+    pub judge: Option<EvalJudgeConfig>,
     pub checks: Vec<CheckDefinition>,
     pub threshold: f64,
     pub source_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct EvalJudgeConfig {
+    pub backend: Option<EvalJudgeBackend>,
+    pub model: Option<String>,
+    pub api_key_env: Option<String>,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvalJudgeBackend {
+    TypeSafe,
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +57,7 @@ pub struct CheckDefinition {
     pub required: bool,
     pub weight: f64,
     pub standard: Option<String>,
+    pub rubric: Option<String>,
     pub event_type: Option<String>,
     pub tool_name: Option<String>,
     pub min_count: u64,
@@ -54,6 +74,7 @@ enum JudgeRunner {
     Claude(ClaudeJudge),
     OpenCode(OpenCodeJudge),
     Command(JudgeCommand),
+    TypeSafe(TypeSafeJudge),
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +96,13 @@ struct OpenCodeJudge {
 struct JudgeCommand {
     program: PathBuf,
     args: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct TypeSafeJudge {
+    endpoint: String,
+    model: String,
+    api_key_env: String,
 }
 
 #[derive(Debug)]
@@ -116,6 +144,24 @@ enum LatestRunTelemetry {
     Found(LatestTelemetry),
 }
 
+#[derive(Debug)]
+struct PreparedJudgeCheck {
+    check_id: String,
+    standard: Option<String>,
+    standard_path: Option<String>,
+    standard_contents: Option<String>,
+    rubric: Option<PreparedRubric>,
+    criteria: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedRubric {
+    id: String,
+    path: String,
+    instructions: String,
+    criteria: Vec<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct JudgeRequest<'a> {
     eval_id: &'a str,
@@ -124,7 +170,109 @@ struct JudgeRequest<'a> {
     standard: Option<&'a str>,
     standard_path: Option<String>,
     standard_contents: Option<String>,
+    rubric: Option<&'a str>,
+    rubric_path: Option<String>,
+    rubric_contents: Option<String>,
     workspace: String,
+}
+
+#[derive(Debug, Serialize)]
+struct TypeSafeRequest {
+    state: TypeSafeState,
+    model: String,
+    questions: BTreeMap<String, TypeSafeScoreQuestion>,
+}
+
+#[derive(Debug, Serialize)]
+struct TypeSafeState {
+    eval_id: String,
+    task: String,
+    workspace: String,
+    checks: BTreeMap<String, TypeSafeCheckState>,
+    workspace_snapshot: TypeSafeWorkspaceSnapshot,
+}
+
+#[derive(Debug, Serialize)]
+struct TypeSafeCheckState {
+    check_id: String,
+    standard: Option<String>,
+    standard_path: Option<String>,
+    standard_contents: Option<String>,
+    rubric: Option<TypeSafeRubricState>,
+}
+
+#[derive(Debug, Serialize)]
+struct TypeSafeRubricState {
+    id: String,
+    path: String,
+    instructions: String,
+    criteria: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct TypeSafeWorkspaceSnapshot {
+    status: Option<String>,
+    diff_stat: Option<String>,
+    diff: Option<String>,
+    truncated: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct TypeSafeScoreQuestion {
+    #[serde(rename = "type")]
+    question_type: &'static str,
+    instructions: String,
+    criteria: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TypeSafeResponse {
+    #[serde(default)]
+    model: Option<String>,
+    answers: BTreeMap<String, TypeSafeScoreAnswer>,
+    #[serde(default)]
+    usage: Option<TypeSafeUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TypeSafeScoreAnswer {
+    #[serde(rename = "type")]
+    answer_type: String,
+    score: f64,
+    #[serde(default)]
+    confidence: Option<f64>,
+    #[serde(default)]
+    probabilities: BTreeMap<String, f64>,
+    #[serde(default)]
+    legend: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TypeSafeScoreMetadata {
+    pub provider: String,
+    pub question_id: String,
+    pub raw_score: f64,
+    pub normalized_score: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub probabilities: BTreeMap<String, f64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub legend: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub criteria: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TypeSafeUsage {
+    #[serde(default, alias = "input")]
+    input_tokens: Option<u64>,
+    #[serde(default, alias = "output")]
+    output_tokens: Option<u64>,
+    #[serde(default, alias = "cache_read")]
+    cache_read_tokens: Option<u64>,
+    #[serde(default)]
+    total_tokens: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -215,6 +363,8 @@ pub struct CheckResult {
     pub harness: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub typesafe: Option<TypeSafeScoreMetadata>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -243,7 +393,20 @@ impl JudgeConfig {
         model: Option<String>,
         command: Option<PathBuf>,
         args: Vec<String>,
+        backend: Option<JudgeBackend>,
+        typesafe_model: String,
+        typesafe_api_key_env: String,
+        typesafe_url: String,
     ) -> anyhow::Result<Self> {
+        if matches!(backend, Some(JudgeBackend::TypeSafe)) {
+            return Ok(Self {
+                runner: Some(JudgeRunner::TypeSafe(TypeSafeJudge::new(
+                    typesafe_url,
+                    typesafe_model,
+                    typesafe_api_key_env,
+                )?)),
+            });
+        }
         if command.is_some() {
             return Ok(Self {
                 runner: command.map(|program| JudgeRunner::Command(JudgeCommand { program, args })),
@@ -269,6 +432,34 @@ impl JudgeConfig {
             HarnessKind::Gemini => {
                 bail!("eval judge --harness currently supports codex, claude, and opencode")
             }
+        }
+    }
+
+    fn for_definition(&self, definition: &EvalDefinition) -> anyhow::Result<Self> {
+        if self.runner.is_some() {
+            return Ok(self.clone());
+        }
+        let Some(judge) = &definition.judge else {
+            return Ok(Self::default());
+        };
+        match judge.backend {
+            Some(EvalJudgeBackend::TypeSafe) => Ok(Self {
+                runner: Some(JudgeRunner::TypeSafe(TypeSafeJudge::new(
+                    judge
+                        .url
+                        .clone()
+                        .unwrap_or_else(|| DEFAULT_TYPESAFE_URL.to_owned()),
+                    judge
+                        .model
+                        .clone()
+                        .unwrap_or_else(|| DEFAULT_TYPESAFE_MODEL.to_owned()),
+                    judge
+                        .api_key_env
+                        .clone()
+                        .unwrap_or_else(|| DEFAULT_TYPESAFE_API_KEY_ENV.to_owned()),
+                )?)),
+            }),
+            None => Ok(Self::default()),
         }
     }
 }
@@ -347,9 +538,35 @@ pub fn run_definition(
     judge_config: &JudgeConfig,
 ) -> anyhow::Result<EvalResult> {
     let started = Instant::now();
+    let judge_config = judge_config.for_definition(&definition)?;
     let mut checks = Vec::with_capacity(definition.checks.len());
-    for check in &definition.checks {
-        checks.push(run_check(workspace, &definition, check, judge_config)?);
+    if let Some(JudgeRunner::TypeSafe(judge)) = &judge_config.runner {
+        let judge_results = match run_typesafe_judge_checks(workspace, &definition, judge) {
+            Ok(results) => results,
+            Err(error) => typesafe_judge_failure_results(
+                &definition,
+                elapsed_ms(started.elapsed()),
+                format!("TypeSafe judge failed: {error:#}"),
+                Some(judge.model.clone()),
+            ),
+        };
+        for check in &definition.checks {
+            if check.check_type == CheckType::Judge {
+                let result = judge_results
+                    .get(&check.id)
+                    .with_context(|| {
+                        format!("missing TypeSafe result for judge check `{}`", check.id)
+                    })?
+                    .clone();
+                checks.push(result);
+            } else {
+                checks.push(run_check(workspace, &definition, check, &judge_config)?);
+            }
+        }
+    } else {
+        for check in &definition.checks {
+            checks.push(run_check(workspace, &definition, check, &judge_config)?);
+        }
     }
     Ok(aggregate_result(
         definition,
@@ -490,6 +707,7 @@ fn run_command_check(workspace: &Path, check: &CheckDefinition) -> anyhow::Resul
         model: None,
         harness: Some("command".to_owned()),
         session_id: None,
+        typesafe: None,
     })
 }
 
@@ -520,6 +738,7 @@ fn run_telemetry_check(workspace: &Path, check: &CheckDefinition) -> anyhow::Res
         model: None,
         harness: Some("telemetry".to_owned()),
         session_id: None,
+        typesafe: None,
     };
 
     let latest = match telemetry {
@@ -578,6 +797,7 @@ fn run_telemetry_check(workspace: &Path, check: &CheckDefinition) -> anyhow::Res
         model: None,
         harness: Some("telemetry".to_owned()),
         session_id: None,
+        typesafe: None,
     })
 }
 
@@ -730,6 +950,7 @@ fn run_judge_check(
             model: None,
             harness: Some("judge-unavailable".to_owned()),
             session_id: None,
+            typesafe: None,
         });
     };
 
@@ -738,6 +959,18 @@ fn run_judge_check(
         .map(|path| {
             fs::read_to_string(path)
                 .with_context(|| format!("failed to read standard `{}`", path.display()))
+        })
+        .transpose()?;
+    let rubric_path = check
+        .rubric
+        .as_deref()
+        .map(|rubric| resolve_rubric(workspace, rubric))
+        .transpose()?;
+    let rubric_contents = rubric_path
+        .as_deref()
+        .map(|path| {
+            fs::read_to_string(path)
+                .with_context(|| format!("failed to read rubric `{}`", path.display()))
         })
         .transpose()?;
     let request = JudgeRequest {
@@ -749,6 +982,9 @@ fn run_judge_check(
             .as_ref()
             .map(|path| path.display().to_string()),
         standard_contents,
+        rubric: check.rubric.as_deref(),
+        rubric_path: rubric_path.as_ref().map(|path| path.display().to_string()),
+        rubric_contents,
         workspace: workspace.display().to_string(),
     };
     let execution = runner
@@ -781,6 +1017,7 @@ fn run_judge_check(
             model: execution.model,
             harness: Some(execution.harness.to_owned()),
             session_id: None,
+            typesafe: None,
         });
     }
     let stdout = String::from_utf8_lossy(&execution.stdout);
@@ -840,7 +1077,325 @@ fn run_judge_check(
             .harness
             .or_else(|| Some(execution.harness.to_owned())),
         session_id: response.session_id,
+        typesafe: None,
     })
+}
+
+fn typesafe_judge_failure_results(
+    definition: &EvalDefinition,
+    duration_ms: u128,
+    reason: String,
+    model: Option<String>,
+) -> BTreeMap<String, CheckResult> {
+    definition
+        .checks
+        .iter()
+        .filter(|check| check.check_type == CheckType::Judge)
+        .map(|check| {
+            (
+                check.id.clone(),
+                CheckResult {
+                    id: check.id.clone(),
+                    check_type: CheckType::Judge,
+                    outcome: CheckOutcome::Failed,
+                    required: check.required,
+                    weight: check.weight,
+                    score: Some(0.0),
+                    duration_ms,
+                    command: Some("typesafe systemone".to_owned()),
+                    exit_code: None,
+                    standard: check.standard.clone(),
+                    standard_path: None,
+                    violations: vec![reason.clone()],
+                    output: None,
+                    token_usage: None,
+                    model: model.clone(),
+                    harness: Some("typesafe".to_owned()),
+                    session_id: None,
+                    typesafe: None,
+                },
+            )
+        })
+        .collect()
+}
+
+fn run_typesafe_judge_checks(
+    workspace: &Path,
+    definition: &EvalDefinition,
+    judge: &TypeSafeJudge,
+) -> anyhow::Result<BTreeMap<String, CheckResult>> {
+    let started = Instant::now();
+    let mut prepared = Vec::new();
+    for check in definition
+        .checks
+        .iter()
+        .filter(|check| check.check_type == CheckType::Judge)
+    {
+        let standard_path = check
+            .standard
+            .as_deref()
+            .map(|standard| resolve_standard(workspace, standard))
+            .transpose()?;
+        let standard_contents = standard_path
+            .as_deref()
+            .map(|path| {
+                fs::read_to_string(path)
+                    .with_context(|| format!("failed to read standard `{}`", path.display()))
+            })
+            .transpose()?;
+        let rubric = check
+            .rubric
+            .as_deref()
+            .map(|rubric| load_typesafe_rubric(workspace, rubric))
+            .transpose()?;
+        let criteria = rubric
+            .as_ref()
+            .map(|rubric| rubric.criteria.clone())
+            .unwrap_or_else(default_typesafe_criteria);
+        prepared.push(PreparedJudgeCheck {
+            check_id: check.id.clone(),
+            standard: check.standard.clone(),
+            standard_path: standard_path.map(|path| path.display().to_string()),
+            standard_contents,
+            rubric,
+            criteria,
+        });
+    }
+
+    if prepared.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+
+    let request = build_typesafe_request(workspace, definition, judge, &prepared)?;
+    let response = judge.run(&request)?;
+    let duration_ms = elapsed_ms(started.elapsed());
+    let mut results = BTreeMap::new();
+
+    for check in definition
+        .checks
+        .iter()
+        .filter(|check| check.check_type == CheckType::Judge)
+    {
+        let prepared_check = prepared
+            .iter()
+            .find(|prepared| prepared.check_id == check.id)
+            .with_context(|| format!("missing prepared TypeSafe check `{}`", check.id))?;
+        let answer = response.answers.get(&check.id).with_context(|| {
+            format!(
+                "TypeSafe response did not include an answer for judge check `{}`",
+                check.id
+            )
+        })?;
+        let result = normalize_typesafe_check_result(
+            check,
+            prepared_check,
+            answer,
+            response.model.as_deref(),
+            response.usage.as_ref(),
+            duration_ms,
+            &judge.model,
+        )?;
+        results.insert(check.id.clone(), result);
+    }
+    Ok(results)
+}
+
+fn build_typesafe_request(
+    workspace: &Path,
+    definition: &EvalDefinition,
+    judge: &TypeSafeJudge,
+    checks: &[PreparedJudgeCheck],
+) -> anyhow::Result<TypeSafeRequest> {
+    let mut state_checks = BTreeMap::new();
+    let mut questions = BTreeMap::new();
+    for check in checks {
+        state_checks.insert(
+            check.check_id.clone(),
+            TypeSafeCheckState {
+                check_id: check.check_id.clone(),
+                standard: check.standard.clone(),
+                standard_path: check.standard_path.clone(),
+                standard_contents: check.standard_contents.clone(),
+                rubric: check.rubric.as_ref().map(|rubric| TypeSafeRubricState {
+                    id: rubric.id.clone(),
+                    path: rubric.path.clone(),
+                    instructions: rubric.instructions.clone(),
+                    criteria: rubric.criteria.clone(),
+                }),
+            },
+        );
+        let instructions = check.rubric.as_ref().map_or_else(
+            || {
+                format!(
+                    "Evaluate how well the local workspace snapshot satisfies judge check `{}` for eval `{}`. Use the task, check standard/rubric, and workspace snapshot in state. Return a score on the ordered satisfaction criteria.",
+                    check.check_id, definition.id
+                )
+            },
+            |rubric| rubric.instructions.clone(),
+        );
+        questions.insert(
+            check.check_id.clone(),
+            TypeSafeScoreQuestion {
+                question_type: "score",
+                instructions,
+                criteria: check.criteria.clone(),
+            },
+        );
+    }
+
+    Ok(TypeSafeRequest {
+        state: TypeSafeState {
+            eval_id: definition.id.clone(),
+            task: definition.task.clone(),
+            workspace: workspace.display().to_string(),
+            checks: state_checks,
+            workspace_snapshot: collect_typesafe_workspace_snapshot(workspace)?,
+        },
+        model: judge.model.clone(),
+        questions,
+    })
+}
+
+fn normalize_typesafe_check_result(
+    check: &CheckDefinition,
+    prepared: &PreparedJudgeCheck,
+    answer: &TypeSafeScoreAnswer,
+    response_model: Option<&str>,
+    usage: Option<&TypeSafeUsage>,
+    duration_ms: u128,
+    requested_model: &str,
+) -> anyhow::Result<CheckResult> {
+    if answer.answer_type != "score" {
+        bail!(
+            "TypeSafe answer for judge check `{}` had type `{}`; expected `score`",
+            check.id,
+            answer.answer_type
+        );
+    }
+    let top_level = prepared.criteria.len().saturating_sub(1);
+    if top_level == 0 {
+        bail!(
+            "TypeSafe judge check `{}` has invalid criteria; expected at least two levels",
+            check.id
+        );
+    }
+    if !(0.0..=(top_level as f64)).contains(&answer.score) {
+        bail!(
+            "TypeSafe answer for judge check `{}` emitted score {}; expected 0.0 through {}",
+            check.id,
+            answer.score,
+            top_level
+        );
+    }
+    let normalized_score = answer.score / top_level as f64;
+    let passed = normalized_score >= 1.0;
+    let mut violations = Vec::new();
+    if !passed {
+        violations.push(format!(
+            "TypeSafe score {:.2} normalized to {:.2} did not pass",
+            answer.score, normalized_score
+        ));
+    }
+
+    Ok(CheckResult {
+        id: check.id.clone(),
+        check_type: CheckType::Judge,
+        outcome: if passed {
+            CheckOutcome::Passed
+        } else {
+            CheckOutcome::Failed
+        },
+        required: check.required,
+        weight: check.weight,
+        score: Some(normalized_score),
+        duration_ms,
+        command: Some("typesafe systemone".to_owned()),
+        exit_code: None,
+        standard: check.standard.clone(),
+        standard_path: prepared.standard_path.clone(),
+        violations,
+        output: None,
+        token_usage: usage.map(TokenUsage::from),
+        model: response_model
+            .map(str::to_owned)
+            .or_else(|| Some(requested_model.to_owned())),
+        harness: Some("typesafe".to_owned()),
+        session_id: None,
+        typesafe: Some(TypeSafeScoreMetadata {
+            provider: "typesafe".to_owned(),
+            question_id: check.id.clone(),
+            raw_score: answer.score,
+            normalized_score,
+            confidence: answer.confidence,
+            probabilities: answer.probabilities.clone(),
+            legend: answer.legend.clone(),
+            criteria: prepared.criteria.clone(),
+        }),
+    })
+}
+
+fn default_typesafe_criteria() -> Vec<String> {
+    vec![
+        "No evidence the workspace satisfies the task or referenced standard.".to_owned(),
+        "Minimal or mostly unrelated progress; major expected behavior is absent.".to_owned(),
+        "Partial satisfaction with important gaps, regressions, or unverified behavior.".to_owned(),
+        "Substantial satisfaction with minor gaps or limited uncertainty.".to_owned(),
+        "Complete satisfaction of the task and referenced standard with no material gaps found."
+            .to_owned(),
+    ]
+}
+
+fn collect_typesafe_workspace_snapshot(
+    workspace: &Path,
+) -> anyhow::Result<TypeSafeWorkspaceSnapshot> {
+    let status = git_output(workspace, ["status", "--short"])?;
+    let diff_stat = git_output(workspace, ["diff", "--stat"])?;
+    let diff = git_output(workspace, ["diff", "--"])?;
+    let (diff, truncated) = truncate_snapshot(diff, MAX_TYPESAFE_SNAPSHOT_BYTES);
+    Ok(TypeSafeWorkspaceSnapshot {
+        status,
+        diff_stat,
+        diff,
+        truncated,
+    })
+}
+
+fn git_output<const N: usize>(workspace: &Path, args: [&str; N]) -> anyhow::Result<Option<String>> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(workspace)
+        .output()
+        .with_context(|| {
+            format!(
+                "failed to collect TypeSafe judge workspace snapshot in `{}`",
+                workspace.display()
+            )
+        })?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    Ok((!value.is_empty()).then_some(value))
+}
+
+fn truncate_snapshot(value: Option<String>, max_bytes: usize) -> (Option<String>, bool) {
+    let Some(value) = value else {
+        return (None, false);
+    };
+    if value.len() <= max_bytes {
+        return (Some(value), false);
+    }
+    let mut boundary = max_bytes;
+    while !value.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    (
+        Some(format!(
+            "{}\n\n[truncated TypeSafe judge workspace diff to {max_bytes} bytes]",
+            &value[..boundary]
+        )),
+        true,
+    )
 }
 
 fn invalid_judge_response_result(
@@ -869,6 +1424,7 @@ fn invalid_judge_response_result(
         model: execution.model,
         harness: Some(execution.harness.to_owned()),
         session_id: None,
+        typesafe: None,
     }
 }
 
@@ -889,6 +1445,142 @@ fn resolve_standard(workspace: &Path, standard: &str) -> anyhow::Result<PathBuf>
                 standards_dir.display()
             )
         })
+}
+
+fn load_typesafe_rubric(workspace: &Path, rubric: &str) -> anyhow::Result<PreparedRubric> {
+    let path = resolve_rubric(workspace, rubric)?;
+    let contents = fs::read_to_string(&path)
+        .with_context(|| format!("failed to read rubric `{}`", path.display()))?;
+    let definition = parse_rubric_definition(&contents)
+        .with_context(|| format!("failed to parse rubric `{}`", path.display()))?;
+    validate_rubric_definition(&definition, rubric, &path)?;
+    Ok(PreparedRubric {
+        id: rubric.to_owned(),
+        path: path.display().to_string(),
+        instructions: definition.instructions,
+        criteria: definition.criteria,
+    })
+}
+
+fn resolve_rubric(workspace: &Path, rubric: &str) -> anyhow::Result<PathBuf> {
+    let rubrics_dir = workspace.join(".svdo").join("rubrics");
+    let standards_dir = workspace.join(".svdo").join("standards");
+    let candidates = [
+        rubrics_dir.join(rubric),
+        rubrics_dir.join(format!("{rubric}.yaml")),
+        rubrics_dir.join(format!("{rubric}.yml")),
+        standards_dir.join(format!("{rubric}.rubric.yaml")),
+        standards_dir.join(format!("{rubric}.rubric.yml")),
+    ];
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .with_context(|| {
+            format!(
+                "rubric `{rubric}` referenced by judge check was not found in `{}` or as `*.rubric.yaml` under `{}`",
+                rubrics_dir.display(),
+                standards_dir.display()
+            )
+        })
+}
+
+#[derive(Debug)]
+struct RubricDefinition {
+    instructions: String,
+    criteria: Vec<String>,
+}
+
+fn parse_rubric_definition(value: &str) -> anyhow::Result<RubricDefinition> {
+    let lines = value.lines().collect::<Vec<_>>();
+    let mut index = 0;
+    let mut instructions = None;
+    let mut criteria = Vec::new();
+
+    while index < lines.len() {
+        let line = lines[index];
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            index += 1;
+            continue;
+        }
+        if line.starts_with(char::is_whitespace) {
+            bail!("unexpected indented rubric line `{trimmed}`");
+        }
+        if let Some(value) = trimmed.strip_prefix("instructions:") {
+            let value = value.trim();
+            if value == "|" {
+                let (block, next_index) = parse_block(&lines, index + 1);
+                instructions = Some(block);
+                index = next_index;
+            } else {
+                instructions = Some(unquote(value).to_owned());
+                index += 1;
+            }
+        } else if trimmed == "criteria:" {
+            let (parsed_criteria, next_index) = parse_rubric_criteria(&lines, index + 1)?;
+            criteria = parsed_criteria;
+            index = next_index;
+        } else {
+            bail!("unsupported rubric field `{trimmed}`");
+        }
+    }
+
+    Ok(RubricDefinition {
+        instructions: instructions.context("rubric is missing instructions")?,
+        criteria,
+    })
+}
+
+fn parse_rubric_criteria(lines: &[&str], mut index: usize) -> anyhow::Result<(Vec<String>, usize)> {
+    let mut criteria = Vec::new();
+    while index < lines.len() {
+        let line = lines[index];
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            index += 1;
+            continue;
+        }
+        if !line.starts_with("  ") {
+            break;
+        }
+        let Some(value) = line.strip_prefix("  - ") else {
+            bail!("expected rubric criteria item, found `{trimmed}`");
+        };
+        criteria.push(unquote(value.trim()).to_owned());
+        index += 1;
+    }
+    Ok((criteria, index))
+}
+
+fn validate_rubric_definition(
+    rubric: &RubricDefinition,
+    id: &str,
+    path: &Path,
+) -> anyhow::Result<()> {
+    if rubric.instructions.trim().is_empty() {
+        bail!(
+            "rubric `{id}` in `{}` has empty instructions",
+            path.display()
+        );
+    }
+    if !(2..=10).contains(&rubric.criteria.len()) {
+        bail!(
+            "rubric `{id}` in `{}` must define between 2 and 10 ordered criteria levels; found {}",
+            path.display(),
+            rubric.criteria.len()
+        );
+    }
+    if rubric
+        .criteria
+        .iter()
+        .any(|criterion| criterion.trim().is_empty())
+    {
+        bail!(
+            "rubric `{id}` in `{}` has an empty criterion",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 impl JudgeCommand {
@@ -922,6 +1614,7 @@ impl JudgeRunner {
             Self::Codex(judge) => judge.run(request, workspace),
             Self::Claude(judge) => judge.run(request, workspace),
             Self::OpenCode(judge) => judge.run(request, workspace),
+            Self::TypeSafe(_) => bail!("TypeSafe judge checks are executed in a batched request"),
             Self::Command(command) => {
                 let request_path = write_judge_request(request, check_id)?;
                 let output = command.run(&request_path, workspace);
@@ -938,6 +1631,90 @@ impl JudgeRunner {
                     model: None,
                 })
             }
+        }
+    }
+}
+
+impl TypeSafeJudge {
+    fn new(endpoint: String, model: String, api_key_env: String) -> anyhow::Result<Self> {
+        if model.trim().is_empty() {
+            bail!("TypeSafe judge backend requires a non-empty model value");
+        }
+        if api_key_env.trim().is_empty() {
+            bail!("TypeSafe judge backend requires a non-empty api_key_env value");
+        }
+        if endpoint.trim().is_empty() {
+            bail!("TypeSafe judge backend requires a non-empty url value");
+        }
+        Ok(Self {
+            endpoint,
+            model,
+            api_key_env,
+        })
+    }
+
+    fn run(&self, request: &TypeSafeRequest) -> anyhow::Result<TypeSafeResponse> {
+        let api_key = std::env::var(&self.api_key_env).with_context(|| {
+            format!(
+                "TypeSafe judge backend requires an API key in environment variable `{}`. Set `{}` or pass --typesafe-api-key-env with the variable name to use.",
+                self.api_key_env, self.api_key_env
+            )
+        })?;
+        if api_key.trim().is_empty() {
+            bail!(
+                "TypeSafe judge backend found `{}` but it is empty. Set it to a valid TypeSafe API key.",
+                self.api_key_env
+            );
+        }
+
+        let response = reqwest::blocking::Client::new()
+            .post(&self.endpoint)
+            .bearer_auth(api_key)
+            .json(request)
+            .send()
+            .with_context(|| {
+                format!(
+                    "failed to call TypeSafe System One endpoint `{}`",
+                    self.endpoint
+                )
+            })?;
+        let status = response.status();
+        let body = response
+            .text()
+            .context("failed to read TypeSafe System One response body")?;
+        if !status.is_success() {
+            bail!(
+                "TypeSafe System One request failed with HTTP status {status}: {}",
+                truncate(&body, 4_000)
+            );
+        }
+        serde_json::from_str(&body).with_context(|| {
+            format!(
+                "failed to parse TypeSafe System One response JSON: {}",
+                truncate(&body, 4_000)
+            )
+        })
+    }
+}
+
+impl From<&TypeSafeUsage> for TokenUsage {
+    fn from(usage: &TypeSafeUsage) -> Self {
+        Self {
+            input: usage.input_tokens,
+            output: usage.output_tokens,
+            cache_read: usage.cache_read_tokens,
+            total: usage.total_tokens.or_else(|| {
+                match (
+                    usage.input_tokens,
+                    usage.output_tokens,
+                    usage.cache_read_tokens,
+                ) {
+                    (None, None, None) => None,
+                    (input, output, cache_read) => {
+                        Some(input.unwrap_or(0) + output.unwrap_or(0) + cache_read.unwrap_or(0))
+                    }
+                }
+            }),
         }
     }
 }
@@ -1279,6 +2056,48 @@ fn validate_definition(definition: &EvalDefinition, path: &Path) -> anyhow::Resu
     if definition.checks.is_empty() {
         bail!("eval definition `{}` has no checks", path.display());
     }
+    if let Some(judge) = &definition.judge {
+        match judge.backend {
+            Some(EvalJudgeBackend::TypeSafe) => {
+                if judge
+                    .model
+                    .as_deref()
+                    .is_some_and(|value| value.trim().is_empty())
+                {
+                    bail!(
+                        "eval definition `{}` TypeSafe judge model must not be empty",
+                        path.display()
+                    );
+                }
+                if judge
+                    .api_key_env
+                    .as_deref()
+                    .is_some_and(|value| value.trim().is_empty())
+                {
+                    bail!(
+                        "eval definition `{}` TypeSafe judge api_key_env must not be empty",
+                        path.display()
+                    );
+                }
+                if judge
+                    .url
+                    .as_deref()
+                    .is_some_and(|value| value.trim().is_empty())
+                {
+                    bail!(
+                        "eval definition `{}` TypeSafe judge url must not be empty",
+                        path.display()
+                    );
+                }
+            }
+            None => {
+                bail!(
+                    "eval definition `{}` judge config is missing backend",
+                    path.display()
+                );
+            }
+        }
+    }
     if !(0.0..=1.0).contains(&definition.threshold) {
         bail!(
             "eval definition `{}` threshold must be between 0.0 and 1.0",
@@ -1295,6 +2114,17 @@ fn validate_definition(definition: &EvalDefinition, path: &Path) -> anyhow::Resu
         if check.weight < 0.0 {
             bail!(
                 "eval definition `{}` check `{}` has a negative weight",
+                path.display(),
+                check.id
+            );
+        }
+        if check
+            .rubric
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            bail!(
+                "eval definition `{}` check `{}` has an empty rubric",
                 path.display(),
                 check.id
             );
@@ -1333,6 +2163,7 @@ pub fn parse_definition(value: &str) -> anyhow::Result<EvalDefinition> {
     let mut index = 0;
     let mut id = None;
     let mut task = None;
+    let mut judge = None;
     let mut threshold = default_threshold();
     let mut checks = Vec::new();
 
@@ -1363,6 +2194,10 @@ pub fn parse_definition(value: &str) -> anyhow::Result<EvalDefinition> {
             let (parsed_checks, next_index) = parse_checks(&lines, index + 1)?;
             checks = parsed_checks;
             index = next_index;
+        } else if trimmed == "judge:" {
+            let (parsed_judge, next_index) = parse_judge_config(&lines, index + 1)?;
+            judge = Some(parsed_judge);
+            index = next_index;
         } else if let Some(value) = trimmed.strip_prefix("threshold:") {
             threshold = value
                 .trim()
@@ -1377,10 +2212,55 @@ pub fn parse_definition(value: &str) -> anyhow::Result<EvalDefinition> {
     Ok(EvalDefinition {
         id: id.context("eval definition is missing id")?,
         task: task.context("eval definition is missing task")?,
+        judge,
         checks,
         threshold,
         source_path: None,
     })
+}
+
+fn parse_judge_config(
+    lines: &[&str],
+    mut index: usize,
+) -> anyhow::Result<(EvalJudgeConfig, usize)> {
+    let mut judge = EvalJudgeConfig::default();
+    while index < lines.len() {
+        let line = lines[index];
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            index += 1;
+            continue;
+        }
+        if !line.starts_with("  ") {
+            break;
+        }
+        let field = line
+            .strip_prefix("  ")
+            .with_context(|| format!("unsupported judge indentation `{trimmed}`"))?;
+        apply_judge_field(&mut judge, field.trim())?;
+        index += 1;
+    }
+    Ok((judge, index))
+}
+
+fn apply_judge_field(judge: &mut EvalJudgeConfig, field: &str) -> anyhow::Result<()> {
+    let Some((key, value)) = field.split_once(':') else {
+        bail!("expected judge field `key: value`, found `{field}`");
+    };
+    let value = unquote(value.trim());
+    match key.trim() {
+        "backend" => {
+            judge.backend = Some(match value {
+                "typesafe" => EvalJudgeBackend::TypeSafe,
+                other => bail!("unsupported judge backend `{other}`"),
+            });
+        }
+        "model" => judge.model = Some(value.to_owned()),
+        "api_key_env" => judge.api_key_env = Some(value.to_owned()),
+        "url" => judge.url = Some(value.to_owned()),
+        other => bail!("unsupported judge field `{other}`"),
+    }
+    Ok(())
 }
 
 fn parse_checks(lines: &[&str], mut index: usize) -> anyhow::Result<(Vec<CheckDefinition>, usize)> {
@@ -1407,6 +2287,7 @@ fn parse_checks(lines: &[&str], mut index: usize) -> anyhow::Result<(Vec<CheckDe
                 required: false,
                 weight: default_weight(),
                 standard: None,
+                rubric: None,
                 event_type: None,
                 tool_name: None,
                 min_count: DEFAULT_TELEMETRY_MIN_COUNT,
@@ -1456,6 +2337,7 @@ fn apply_check_field(check: &mut CheckDefinition, field: &str) -> anyhow::Result
         }
         "weight" => check.weight = value.parse::<f64>().context("weight must be a number")?,
         "standard" => check.standard = Some(value.to_owned()),
+        "rubric" => check.rubric = Some(value.to_owned()),
         "event_type" => check.event_type = Some(value.to_owned()),
         "tool_name" => check.tool_name = Some(value.to_owned()),
         "min_count" => {
@@ -1536,6 +2418,9 @@ fn render_terminal(report: &EvalRunReport) -> String {
             if check.required {
                 output.push_str(" required");
             }
+            if let Some(provider) = check_provider_label(check) {
+                output.push_str(&format!(" via {provider}"));
+            }
             output.push('\n');
         }
         append_failure_report(&mut output, result);
@@ -1569,6 +2454,9 @@ fn append_failure_report(output: &mut String, result: &EvalResult) {
         }
         if let Some(exit_code) = check.exit_code {
             output.push_str(&format!(" exit {exit_code}"));
+        }
+        if let Some(provider) = check_provider_label(check) {
+            output.push_str(&format!(" via {provider}"));
         }
         output.push('\n');
 
@@ -1627,11 +2515,11 @@ fn append_output_excerpt(output: &mut String, value: &str) {
 }
 
 fn render_csv(report: &EvalRunReport) -> String {
-    let mut output = "eval_id,eval_passed,overall_score,threshold,eval_duration_ms,check_id,check_type,check_outcome,required,weight,score,check_duration_ms,exit_code,violations\n".to_owned();
+    let mut output = "eval_id,eval_passed,overall_score,threshold,eval_duration_ms,check_id,check_type,check_outcome,check_harness,required,weight,score,check_duration_ms,exit_code,violations\n".to_owned();
     for result in &report.results {
         for check in &result.checks {
             output.push_str(&format!(
-                "{},{},{:.4},{:.4},{},{},{},{},{},{:.4},{},{},{},{}\n",
+                "{},{},{:.4},{:.4},{},{},{},{},{},{},{:.4},{},{},{},{}\n",
                 csv(&result.id),
                 result.passed,
                 result.overall_score,
@@ -1640,6 +2528,7 @@ fn render_csv(report: &EvalRunReport) -> String {
                 csv(&check.id),
                 check_type_label(check.check_type),
                 outcome_label(check.outcome),
+                csv(check.harness.as_deref().unwrap_or("")),
                 check.required,
                 check.weight,
                 check
@@ -1654,6 +2543,14 @@ fn render_csv(report: &EvalRunReport) -> String {
         }
     }
     output
+}
+
+fn check_provider_label(check: &CheckResult) -> Option<String> {
+    let harness = check.harness.as_deref()?;
+    match check.model.as_deref() {
+        Some(model) => Some(format!("{harness}/{model}")),
+        None => Some(harness.to_owned()),
+    }
 }
 
 fn failure_output(stdout: &[u8], stderr: &[u8]) -> String {
@@ -1778,6 +2675,7 @@ checks:
   - id: architecture
     type: judge
     standard: api-architecture
+    rubric: architecture-alignment
     weight: 0.4
   - id: requires-apply-patch
     type: telemetry
@@ -1794,6 +2692,10 @@ threshold: 0.85
         assert!(definition.checks[0].required);
         assert_eq!(definition.checks[1].check_type, CheckType::Judge);
         assert_eq!(definition.checks[1].weight, 0.4);
+        assert_eq!(
+            definition.checks[1].rubric.as_deref(),
+            Some("architecture-alignment")
+        );
         assert_eq!(definition.checks[2].check_type, CheckType::Telemetry);
         assert_eq!(
             definition.checks[2].event_type.as_deref(),
@@ -1808,10 +2710,77 @@ threshold: 0.85
     }
 
     #[test]
+    fn parses_eval_definition_with_typesafe_judge_config() -> anyhow::Result<()> {
+        let definition = parse_definition(
+            r#"
+id: scored-alignment
+task: Check alignment.
+judge:
+  backend: typesafe
+  model: jev-latest
+  api_key_env: SVDO_TYPESAFE_KEY
+  url: https://typesafe.example/systemone
+checks:
+  - id: architecture
+    type: judge
+    standard: api-architecture
+"#,
+        )?;
+
+        let judge = definition.judge.expect("missing judge config");
+        assert_eq!(judge.backend, Some(EvalJudgeBackend::TypeSafe));
+        assert_eq!(judge.model.as_deref(), Some("jev-latest"));
+        assert_eq!(judge.api_key_env.as_deref(), Some("SVDO_TYPESAFE_KEY"));
+        assert_eq!(
+            judge.url.as_deref(),
+            Some("https://typesafe.example/systemone")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_eval_judge_config_without_backend() {
+        let definition = EvalDefinition {
+            id: "missing-backend".to_owned(),
+            task: "Judge work".to_owned(),
+            judge: Some(EvalJudgeConfig {
+                backend: None,
+                model: Some("jev-latest".to_owned()),
+                api_key_env: None,
+                url: None,
+            }),
+            checks: vec![CheckDefinition {
+                id: "architecture".to_owned(),
+                check_type: CheckType::Judge,
+                command: None,
+                required: false,
+                weight: 1.0,
+                standard: None,
+                rubric: None,
+                event_type: None,
+                tool_name: None,
+                min_count: DEFAULT_TELEMETRY_MIN_COUNT,
+            }],
+            threshold: 1.0,
+            source_path: None,
+        };
+
+        let error = validate_definition(&definition, Path::new("eval.yaml"))
+            .expect_err("missing judge backend should fail validation");
+
+        assert!(
+            error
+                .to_string()
+                .contains("judge config is missing backend")
+        );
+    }
+
+    #[test]
     fn aggregates_weighted_scores_and_required_failures() {
         let definition = EvalDefinition {
             id: "sample".to_owned(),
             task: "Do work".to_owned(),
+            judge: None,
             checks: Vec::new(),
             threshold: 0.8,
             source_path: None,
@@ -1835,6 +2804,7 @@ threshold: 0.85
         let definition = EvalDefinition {
             id: "sample".to_owned(),
             task: "Do work".to_owned(),
+            judge: None,
             checks: Vec::new(),
             threshold: 0.4,
             source_path: None,
@@ -1860,6 +2830,7 @@ threshold: 0.85
         let definition = EvalDefinition {
             id: "command".to_owned(),
             task: "Run command".to_owned(),
+            judge: None,
             checks: vec![CheckDefinition {
                 id: "shell".to_owned(),
                 check_type: CheckType::Command,
@@ -1867,6 +2838,7 @@ threshold: 0.85
                 required: true,
                 weight: 1.0,
                 standard: None,
+                rubric: None,
                 event_type: None,
                 tool_name: None,
                 min_count: DEFAULT_TELEMETRY_MIN_COUNT,
@@ -1890,6 +2862,7 @@ threshold: 0.85
         let definition = EvalDefinition {
             id: "judge".to_owned(),
             task: "Judge work".to_owned(),
+            judge: None,
             checks: vec![CheckDefinition {
                 id: "architecture".to_owned(),
                 check_type: CheckType::Judge,
@@ -1897,6 +2870,7 @@ threshold: 0.85
                 required: false,
                 weight: 1.0,
                 standard: None,
+                rubric: None,
                 event_type: None,
                 tool_name: None,
                 min_count: DEFAULT_TELEMETRY_MIN_COUNT,
@@ -1913,6 +2887,409 @@ threshold: 0.85
         assert_eq!(
             result.checks[0].harness.as_deref(),
             Some("judge-unavailable")
+        );
+        fs::remove_dir_all(workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn selects_typesafe_judge_backend_from_cli() -> anyhow::Result<()> {
+        let config = JudgeConfig::from_cli(
+            None,
+            None,
+            None,
+            Vec::new(),
+            Some(JudgeBackend::TypeSafe),
+            "jev-latest".to_owned(),
+            "SVDO_TYPESAFE_KEY".to_owned(),
+            "https://api.typesafe.ai/v1/systemone".to_owned(),
+        )?;
+
+        match config.runner {
+            Some(JudgeRunner::TypeSafe(judge)) => {
+                assert_eq!(judge.model, "jev-latest");
+                assert_eq!(judge.api_key_env, "SVDO_TYPESAFE_KEY");
+            }
+            other => panic!("expected TypeSafe judge runner, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn eval_file_typesafe_judge_config_is_used_when_cli_omits_judge() -> anyhow::Result<()> {
+        let definition = EvalDefinition {
+            id: "typesafe-default".to_owned(),
+            task: "Judge work".to_owned(),
+            judge: Some(EvalJudgeConfig {
+                backend: Some(EvalJudgeBackend::TypeSafe),
+                model: Some("jev-custom".to_owned()),
+                api_key_env: Some("SVDO_TYPESAFE_KEY".to_owned()),
+                url: Some("https://typesafe.example/systemone".to_owned()),
+            }),
+            checks: Vec::new(),
+            threshold: 1.0,
+            source_path: None,
+        };
+
+        let config = JudgeConfig::default().for_definition(&definition)?;
+
+        match config.runner {
+            Some(JudgeRunner::TypeSafe(judge)) => {
+                assert_eq!(judge.model, "jev-custom");
+                assert_eq!(judge.api_key_env, "SVDO_TYPESAFE_KEY");
+                assert_eq!(judge.endpoint, "https://typesafe.example/systemone");
+            }
+            other => panic!("expected TypeSafe judge runner, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cli_judge_config_overrides_eval_file_judge_config() -> anyhow::Result<()> {
+        let definition = EvalDefinition {
+            id: "typesafe-default".to_owned(),
+            task: "Judge work".to_owned(),
+            judge: Some(EvalJudgeConfig {
+                backend: Some(EvalJudgeBackend::TypeSafe),
+                model: Some("jev-from-file".to_owned()),
+                api_key_env: Some("SVDO_TYPESAFE_KEY".to_owned()),
+                url: None,
+            }),
+            checks: Vec::new(),
+            threshold: 1.0,
+            source_path: None,
+        };
+        let cli_config = JudgeConfig::from_cli(
+            Some(HarnessKind::Codex),
+            Some("gpt-5".to_owned()),
+            None,
+            Vec::new(),
+            None,
+            DEFAULT_TYPESAFE_MODEL.to_owned(),
+            DEFAULT_TYPESAFE_API_KEY_ENV.to_owned(),
+            DEFAULT_TYPESAFE_URL.to_owned(),
+        )?;
+
+        let config = cli_config.for_definition(&definition)?;
+
+        match config.runner {
+            Some(JudgeRunner::Codex(judge)) => {
+                assert_eq!(judge.model.as_ref().map(ModelName::as_str), Some("gpt-5"));
+            }
+            other => panic!("expected CLI Codex judge runner, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn typesafe_request_uses_structured_score_questions() -> anyhow::Result<()> {
+        let workspace = unique_temp_path("svdo-meter-eval-typesafe-request");
+        fs::create_dir_all(workspace.join(".svdo").join("standards"))?;
+        fs::write(
+            workspace
+                .join(".svdo")
+                .join("standards")
+                .join("api-architecture.md"),
+            "# API Architecture\n\nUse clear boundaries.",
+        )?;
+        let definition = EvalDefinition {
+            id: "typesafe".to_owned(),
+            task: "Add account endpoint".to_owned(),
+            judge: None,
+            checks: Vec::new(),
+            threshold: 1.0,
+            source_path: None,
+        };
+        let judge = TypeSafeJudge {
+            endpoint: "https://api.typesafe.ai/v1/systemone".to_owned(),
+            model: "jev-latest".to_owned(),
+            api_key_env: "SVDO_TYPESAFE_KEY".to_owned(),
+        };
+        let prepared = vec![PreparedJudgeCheck {
+            check_id: "architecture".to_owned(),
+            standard: Some("api-architecture".to_owned()),
+            standard_path: Some(
+                workspace
+                    .join(".svdo")
+                    .join("standards")
+                    .join("api-architecture.md")
+                    .display()
+                    .to_string(),
+            ),
+            standard_contents: Some("# API Architecture\n\nUse clear boundaries.".to_owned()),
+            rubric: Some(PreparedRubric {
+                id: "architecture-alignment".to_owned(),
+                path: "/tmp/architecture-alignment.yaml".to_owned(),
+                instructions: "Use the architecture rubric.".to_owned(),
+                criteria: vec![
+                    "No alignment.".to_owned(),
+                    "Partial alignment.".to_owned(),
+                    "Full alignment.".to_owned(),
+                ],
+            }),
+            criteria: vec![
+                "No alignment.".to_owned(),
+                "Partial alignment.".to_owned(),
+                "Full alignment.".to_owned(),
+            ],
+        }];
+
+        let request = build_typesafe_request(&workspace, &definition, &judge, &prepared)?;
+
+        assert_eq!(request.model, "jev-latest");
+        let question = request
+            .questions
+            .get("architecture")
+            .expect("missing score question");
+        assert_eq!(question.question_type, "score");
+        assert_eq!(
+            question.criteria,
+            vec![
+                "No alignment.".to_owned(),
+                "Partial alignment.".to_owned(),
+                "Full alignment.".to_owned(),
+            ]
+        );
+        assert_eq!(question.instructions, "Use the architecture rubric.");
+        assert_eq!(
+            request
+                .state
+                .checks
+                .get("architecture")
+                .and_then(|check| check.standard_contents.as_deref()),
+            Some("# API Architecture\n\nUse clear boundaries.")
+        );
+        assert_eq!(
+            request
+                .state
+                .checks
+                .get("architecture")
+                .and_then(|check| check.rubric.as_ref())
+                .map(|rubric| rubric.id.as_str()),
+            Some("architecture-alignment")
+        );
+        fs::remove_dir_all(workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn loads_typesafe_rubric_from_rubrics_directory() -> anyhow::Result<()> {
+        let workspace = unique_temp_path("svdo-meter-eval-rubric-load");
+        fs::create_dir_all(workspace.join(".svdo").join("rubrics"))?;
+        fs::write(
+            workspace
+                .join(".svdo")
+                .join("rubrics")
+                .join("architecture-alignment.yaml"),
+            r#"
+instructions: |
+  Evaluate architecture alignment against the referenced standard.
+criteria:
+  - No alignment.
+  - Partial alignment.
+  - Full alignment.
+"#,
+        )?;
+
+        let rubric = load_typesafe_rubric(&workspace, "architecture-alignment")?;
+
+        assert_eq!(rubric.id, "architecture-alignment");
+        assert!(
+            rubric
+                .instructions
+                .contains("Evaluate architecture alignment")
+        );
+        assert_eq!(
+            rubric.criteria,
+            vec![
+                "No alignment.".to_owned(),
+                "Partial alignment.".to_owned(),
+                "Full alignment.".to_owned(),
+            ]
+        );
+        fs::remove_dir_all(workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_typesafe_rubric_with_too_few_criteria() -> anyhow::Result<()> {
+        let workspace = unique_temp_path("svdo-meter-eval-rubric-invalid");
+        fs::create_dir_all(workspace.join(".svdo").join("rubrics"))?;
+        fs::write(
+            workspace
+                .join(".svdo")
+                .join("rubrics")
+                .join("too-short.yaml"),
+            r#"
+instructions: Evaluate alignment.
+criteria:
+  - Only one level.
+"#,
+        )?;
+
+        let error = load_typesafe_rubric(&workspace, "too-short")
+            .expect_err("rubric with one criterion should fail");
+
+        assert!(error.to_string().contains("between 2 and 10"));
+        fs::remove_dir_all(workspace)?;
+        Ok(())
+    }
+
+    #[test]
+    fn normalizes_typesafe_score_answer_with_metadata() -> anyhow::Result<()> {
+        let check = CheckDefinition {
+            id: "architecture".to_owned(),
+            check_type: CheckType::Judge,
+            command: None,
+            required: true,
+            weight: 0.5,
+            standard: Some("api-architecture".to_owned()),
+            rubric: Some("architecture-alignment".to_owned()),
+            event_type: None,
+            tool_name: None,
+            min_count: DEFAULT_TELEMETRY_MIN_COUNT,
+        };
+        let prepared = PreparedJudgeCheck {
+            check_id: "architecture".to_owned(),
+            standard: check.standard.clone(),
+            standard_path: Some("/tmp/std.md".to_owned()),
+            standard_contents: Some("rubric".to_owned()),
+            rubric: None,
+            criteria: default_typesafe_criteria(),
+        };
+        let answer = TypeSafeScoreAnswer {
+            answer_type: "score".to_owned(),
+            score: 3.0,
+            confidence: Some(0.72),
+            probabilities: BTreeMap::from([("0".to_owned(), 0.0), ("3".to_owned(), 1.0)]),
+            legend: BTreeMap::from([("3".to_owned(), Value::String("good".to_owned()))]),
+        };
+        let usage = TypeSafeUsage {
+            input_tokens: Some(100),
+            output_tokens: Some(12),
+            cache_read_tokens: None,
+            total_tokens: None,
+        };
+
+        let result = normalize_typesafe_check_result(
+            &check,
+            &prepared,
+            &answer,
+            Some("jev-latest"),
+            Some(&usage),
+            25,
+            "jev-latest",
+        )?;
+
+        assert_eq!(result.score, Some(0.75));
+        assert_eq!(result.harness.as_deref(), Some("typesafe"));
+        assert_eq!(result.model.as_deref(), Some("jev-latest"));
+        assert_eq!(
+            result.token_usage.as_ref().and_then(|usage| usage.total),
+            Some(112)
+        );
+        let metadata = result.typesafe.expect("missing TypeSafe metadata");
+        assert_eq!(metadata.provider, "typesafe");
+        assert_eq!(metadata.raw_score, 3.0);
+        assert_eq!(metadata.confidence, Some(0.72));
+        assert_eq!(metadata.probabilities.get("3"), Some(&1.0));
+        assert_eq!(
+            metadata.legend.get("3"),
+            Some(&Value::String("good".to_owned()))
+        );
+        assert_eq!(metadata.criteria.len(), 5);
+        Ok(())
+    }
+
+    #[test]
+    fn missing_typesafe_api_key_is_actionable() {
+        let judge = TypeSafeJudge {
+            endpoint: "https://api.typesafe.ai/v1/systemone".to_owned(),
+            model: "jev-latest".to_owned(),
+            api_key_env: "SVDO_TYPESAFE_KEY_DOES_NOT_EXIST_FOR_TEST".to_owned(),
+        };
+        let request = TypeSafeRequest {
+            state: TypeSafeState {
+                eval_id: "missing-key".to_owned(),
+                task: "task".to_owned(),
+                workspace: "/tmp".to_owned(),
+                checks: BTreeMap::new(),
+                workspace_snapshot: TypeSafeWorkspaceSnapshot {
+                    status: None,
+                    diff_stat: None,
+                    diff: None,
+                    truncated: false,
+                },
+            },
+            model: "jev-latest".to_owned(),
+            questions: BTreeMap::new(),
+        };
+
+        let error = judge
+            .run(&request)
+            .expect_err("missing API key should fail");
+
+        assert!(error.to_string().contains("requires an API key"));
+        assert!(
+            error
+                .to_string()
+                .contains("SVDO_TYPESAFE_KEY_DOES_NOT_EXIST_FOR_TEST")
+        );
+    }
+
+    #[test]
+    fn typesafe_provider_failure_fails_judge_check_without_aborting_eval() -> anyhow::Result<()> {
+        let workspace = unique_temp_path("svdo-meter-eval-typesafe-provider-failure");
+        fs::create_dir_all(&workspace)?;
+        let definition = EvalDefinition {
+            id: "typesafe-provider-failure".to_owned(),
+            task: "Judge work".to_owned(),
+            judge: Some(EvalJudgeConfig {
+                backend: Some(EvalJudgeBackend::TypeSafe),
+                model: Some("jev-latest".to_owned()),
+                api_key_env: Some("SVDO_TYPESAFE_KEY_DOES_NOT_EXIST_FOR_TEST".to_owned()),
+                url: Some("https://api.typesafe.ai/v1/systemone".to_owned()),
+            }),
+            checks: vec![
+                CheckDefinition {
+                    id: "tests".to_owned(),
+                    check_type: CheckType::Command,
+                    command: Some("printf ok".to_owned()),
+                    required: true,
+                    weight: 1.0,
+                    standard: None,
+                    rubric: None,
+                    event_type: None,
+                    tool_name: None,
+                    min_count: DEFAULT_TELEMETRY_MIN_COUNT,
+                },
+                CheckDefinition {
+                    id: "architecture".to_owned(),
+                    check_type: CheckType::Judge,
+                    command: None,
+                    required: false,
+                    weight: 1.0,
+                    standard: None,
+                    rubric: None,
+                    event_type: None,
+                    tool_name: None,
+                    min_count: DEFAULT_TELEMETRY_MIN_COUNT,
+                },
+            ],
+            threshold: 1.0,
+            source_path: None,
+        };
+
+        let result = run_definition(&workspace, definition, &JudgeConfig::default())?;
+
+        assert_eq!(result.checks[0].id, "tests");
+        assert_eq!(result.checks[0].outcome, CheckOutcome::Passed);
+        assert_eq!(result.checks[1].id, "architecture");
+        assert_eq!(result.checks[1].outcome, CheckOutcome::Failed);
+        assert_eq!(result.checks[1].harness.as_deref(), Some("typesafe"));
+        assert!(
+            result.checks[1].violations[0].contains("TypeSafe judge failed")
+                && result.checks[1].violations[0].contains("requires an API key")
         );
         fs::remove_dir_all(workspace)?;
         Ok(())
@@ -2205,6 +3582,7 @@ threshold: 0.85
             model: None,
             harness: None,
             session_id: None,
+            typesafe: None,
         }
     }
 
@@ -2212,6 +3590,7 @@ threshold: 0.85
         EvalDefinition {
             id: "telemetry".to_owned(),
             task: "Check telemetry".to_owned(),
+            judge: None,
             checks: vec![CheckDefinition {
                 id: "requires-tool".to_owned(),
                 check_type: CheckType::Telemetry,
@@ -2219,6 +3598,7 @@ threshold: 0.85
                 required: true,
                 weight: 1.0,
                 standard: None,
+                rubric: None,
                 event_type: Some("tool.started".to_owned()),
                 tool_name: Some(tool_name.to_owned()),
                 min_count,

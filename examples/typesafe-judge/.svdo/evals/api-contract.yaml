@@ -1,0 +1,22 @@
+id: api-contract
+
+task: |
+  Implement the account API contract while preserving repository architecture.
+
+judge:
+  backend: typesafe
+  model: jev-latest
+
+checks:
+  - id: tests
+    type: command
+    command: printf tests-ok
+    required: true
+
+  - id: architecture
+    type: judge
+    standard: api-architecture
+    rubric: architecture-alignment
+    weight: 0.4
+
+threshold: 0.85

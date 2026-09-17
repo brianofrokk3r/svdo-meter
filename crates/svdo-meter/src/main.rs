@@ -69,6 +69,10 @@ async fn main() -> anyhow::Result<()> {
                     args.model,
                     args.judge_command,
                     args.judge_args,
+                    args.judge_backend,
+                    args.typesafe_model,
+                    args.typesafe_api_key_env,
+                    args.typesafe_url,
                 )?;
                 let report = eval::run(&workspace, args.eval.as_deref(), &judge_config)
                     .with_context(|| format!("failed to run evals in `{}`", workspace.display()))?;
