@@ -16,3 +16,4 @@ target
 specs
 docs/internal/*
 examples/**/study-output/*
+.env
