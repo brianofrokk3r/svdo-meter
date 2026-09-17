@@ -64,16 +64,16 @@ async fn main() -> anyhow::Result<()> {
         Commands::Eval(args) => match args.command {
             EvalCommands::Run(args) => {
                 let workspace = args.workspace.unwrap_or(std::env::current_dir()?);
-                let judge_config = eval::JudgeConfig::from_cli(
-                    args.harness,
-                    args.model,
-                    args.judge_command,
-                    args.judge_args,
-                    args.judge_backend,
-                    args.typesafe_model,
-                    args.typesafe_api_key_env,
-                    args.typesafe_url,
-                )?;
+                let judge_config = eval::JudgeConfig::from_cli(eval::JudgeCliConfig {
+                    harness: args.harness,
+                    model: args.model,
+                    command: args.judge_command,
+                    args: args.judge_args,
+                    backend: args.judge_backend,
+                    typesafe_model: args.typesafe_model,
+                    typesafe_api_key_env: args.typesafe_api_key_env,
+                    typesafe_url: args.typesafe_url,
+                })?;
                 let report = eval::run(&workspace, args.eval.as_deref(), &judge_config)
                     .with_context(|| format!("failed to run evals in `{}`", workspace.display()))?;
                 let passed = report.passed;

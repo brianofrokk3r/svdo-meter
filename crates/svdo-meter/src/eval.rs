@@ -68,6 +68,18 @@ pub struct JudgeConfig {
     runner: Option<JudgeRunner>,
 }
 
+#[derive(Debug)]
+pub struct JudgeCliConfig {
+    pub harness: Option<HarnessKind>,
+    pub model: Option<String>,
+    pub command: Option<PathBuf>,
+    pub args: Vec<String>,
+    pub backend: Option<JudgeBackend>,
+    pub typesafe_model: String,
+    pub typesafe_api_key_env: String,
+    pub typesafe_url: String,
+}
+
 #[derive(Debug, Clone)]
 enum JudgeRunner {
     Codex(CodexJudge),
@@ -388,34 +400,31 @@ pub struct TokenUsage {
 }
 
 impl JudgeConfig {
-    pub fn from_cli(
-        harness: Option<HarnessKind>,
-        model: Option<String>,
-        command: Option<PathBuf>,
-        args: Vec<String>,
-        backend: Option<JudgeBackend>,
-        typesafe_model: String,
-        typesafe_api_key_env: String,
-        typesafe_url: String,
-    ) -> anyhow::Result<Self> {
-        if matches!(backend, Some(JudgeBackend::TypeSafe)) {
+    pub fn from_cli(config: JudgeCliConfig) -> anyhow::Result<Self> {
+        if matches!(config.backend, Some(JudgeBackend::TypeSafe)) {
             return Ok(Self {
                 runner: Some(JudgeRunner::TypeSafe(TypeSafeJudge::new(
-                    typesafe_url,
-                    typesafe_model,
-                    typesafe_api_key_env,
+                    config.typesafe_url,
+                    config.typesafe_model,
+                    config.typesafe_api_key_env,
                 )?)),
             });
         }
-        if command.is_some() {
+        if config.command.is_some() {
             return Ok(Self {
-                runner: command.map(|program| JudgeRunner::Command(JudgeCommand { program, args })),
+                runner: config.command.map(|program| {
+                    JudgeRunner::Command(JudgeCommand {
+                        program,
+                        args: config.args,
+                    })
+                }),
             });
         }
-        let Some(harness) = harness else {
+        let Some(harness) = config.harness else {
             return Ok(Self::default());
         };
-        let model = model
+        let model = config
+            .model
             .map(ModelName::new)
             .transpose()
             .context("invalid eval judge --model value")?;
@@ -2894,16 +2903,16 @@ checks:
 
     #[test]
     fn selects_typesafe_judge_backend_from_cli() -> anyhow::Result<()> {
-        let config = JudgeConfig::from_cli(
-            None,
-            None,
-            None,
-            Vec::new(),
-            Some(JudgeBackend::TypeSafe),
-            "jev-latest".to_owned(),
-            "SVDO_TYPESAFE_KEY".to_owned(),
-            "https://api.typesafe.ai/v1/systemone".to_owned(),
-        )?;
+        let config = JudgeConfig::from_cli(JudgeCliConfig {
+            harness: None,
+            model: None,
+            command: None,
+            args: Vec::new(),
+            backend: Some(JudgeBackend::TypeSafe),
+            typesafe_model: "jev-latest".to_owned(),
+            typesafe_api_key_env: "SVDO_TYPESAFE_KEY".to_owned(),
+            typesafe_url: "https://api.typesafe.ai/v1/systemone".to_owned(),
+        })?;
 
         match config.runner {
             Some(JudgeRunner::TypeSafe(judge)) => {
@@ -2959,16 +2968,16 @@ checks:
             threshold: 1.0,
             source_path: None,
         };
-        let cli_config = JudgeConfig::from_cli(
-            Some(HarnessKind::Codex),
-            Some("gpt-5".to_owned()),
-            None,
-            Vec::new(),
-            None,
-            DEFAULT_TYPESAFE_MODEL.to_owned(),
-            DEFAULT_TYPESAFE_API_KEY_ENV.to_owned(),
-            DEFAULT_TYPESAFE_URL.to_owned(),
-        )?;
+        let cli_config = JudgeConfig::from_cli(JudgeCliConfig {
+            harness: Some(HarnessKind::Codex),
+            model: Some("gpt-5".to_owned()),
+            command: None,
+            args: Vec::new(),
+            backend: None,
+            typesafe_model: DEFAULT_TYPESAFE_MODEL.to_owned(),
+            typesafe_api_key_env: DEFAULT_TYPESAFE_API_KEY_ENV.to_owned(),
+            typesafe_url: DEFAULT_TYPESAFE_URL.to_owned(),
+        })?;
 
         let config = cli_config.for_definition(&definition)?;
 
