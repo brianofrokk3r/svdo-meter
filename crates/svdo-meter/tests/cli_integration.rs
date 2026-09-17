@@ -116,6 +116,7 @@ fn help_succeeds_for_documented_command_paths() {
         "Run identifier or provider session identifier",
     );
     assert_success_contains(&["run", "--help"], "--codex-profile");
+    assert_success_contains(&["run", "--help"], "--output-dir");
     assert_success_contains(&["run", "--help"], "--dangerous-bypass");
     assert_success_contains(&["run", "--help"], "[aliases: --id, --ticket-id]");
     assert_success_contains(
@@ -902,7 +903,7 @@ fn repo_sample_evals_are_runnable() {
         "json",
     ]);
 
-    assert!(output.status.success());
+    assert_output_success(&output);
     assert_stdout_contains(&output, "\"id\": \"cli-entrypoint\"");
     assert_stdout_contains(&output, "\"id\": \"main-entrypoint\"");
     assert_stdout_contains(&output, "\"harness\": \"judge-unavailable\"");
@@ -1103,6 +1104,74 @@ fn opencode_run_invokes_non_interactive_cli_with_expected_arguments() -> std::io
     assert!(telemetry.contains("\"session_id\":\"ses_opencode_discovered\""));
     assert!(telemetry.contains("\"source\":\"opencode\""));
     assert!(telemetry.contains("\"provider_event_count\":1"));
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn run_writes_telemetry_to_explicit_output_dir() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-output-dir-workspace");
+    let output_dir = unique_temp_path("svdo-meter-output-dir");
+    let bin_dir = workspace.join("bin");
+    let capture = workspace.join("opencode-argv.txt");
+    fs::create_dir_all(&workspace)?;
+    install_opencode_fixture(&bin_dir)?;
+
+    let output = run_svdo_meter_with_path_and_env(
+        &[
+            "run",
+            "--ticket",
+            "ENG-OUTPUT-DIR",
+            "--harness",
+            "opencode",
+            "--workspace",
+            path_str(&workspace)?,
+            "--output-dir",
+            path_str(&output_dir)?,
+            "Implement ENG-OUTPUT-DIR",
+        ],
+        &bin_dir,
+        &[("OPENCODE_CAPTURE", path_str(&capture)?)],
+    );
+
+    assert!(output.status.success());
+    let telemetry = read_telemetry_streams(&output_dir)?;
+    assert!(telemetry.contains("\"ticket_id\":\"ENG-OUTPUT-DIR\""));
+    assert!(telemetry.contains("\"harness\":\"opencode\""));
+    assert!(!workspace.join(".svdo").join("meter").exists());
+    fs::remove_dir_all(workspace)?;
+    fs::remove_dir_all(output_dir)?;
+    Ok(())
+}
+
+#[test]
+fn run_rejects_output_dir_that_is_a_file() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-output-file-workspace");
+    let output_dir = workspace.join("meter-file");
+    let bin_dir = workspace.join("bin");
+    fs::create_dir_all(&workspace)?;
+    fs::write(&output_dir, "not a directory")?;
+    install_opencode_fixture(&bin_dir)?;
+
+    let output = run_svdo_meter_with_path(
+        &[
+            "run",
+            "--ticket",
+            "ENG-OUTPUT-FILE",
+            "--harness",
+            "opencode",
+            "--workspace",
+            path_str(&workspace)?,
+            "--output-dir",
+            path_str(&output_dir)?,
+            "Implement ENG-OUTPUT-FILE",
+        ],
+        &bin_dir,
+    );
+
+    assert!(!output.status.success());
+    assert_output_contains(&output, "failed to create meter output directory");
+    assert_output_contains(&output, path_str(&output_dir)?);
     fs::remove_dir_all(workspace)?;
     Ok(())
 }
@@ -1463,6 +1532,16 @@ fn assert_output_contains(output: &Output, expected: &str) {
     );
 }
 
+fn assert_output_success(output: &Output) {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "expected command to succeed:\nstatus: {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        output.status
+    );
+}
+
 fn run_svdo_meter(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_svdo-meter"))
         .args(args)
@@ -1518,6 +1597,14 @@ fn write_workspace_telemetry_streams(workspace: &Path, contents: &str) -> std::i
         )?;
     }
     Ok(())
+}
+
+fn read_telemetry_streams(meter_dir: &Path) -> std::io::Result<String> {
+    let mut telemetry = String::new();
+    for entry in fs::read_dir(meter_dir)? {
+        telemetry.push_str(&fs::read_to_string(entry?.path())?);
+    }
+    Ok(telemetry)
 }
 
 fn write_eval_definition(workspace: &Path, file_name: &str, contents: &str) -> std::io::Result<()> {

@@ -2,10 +2,10 @@
 .agents
 .codex
 .svdo
-!.svdo/evals/
-!.svdo/evals/**
 !.svdo/standards/
 !.svdo/standards/**
+!.svdo/evals/
+!.svdo/evals/**
 !examples/**/.svdo/
 !examples/**/.svdo/evals/
 !examples/**/.svdo/evals/**
