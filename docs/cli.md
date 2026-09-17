@@ -361,6 +361,7 @@ Supported check fields:
 | `command` | Yes for `command` | Shell command executed from the workspace directory. |
 | `required` | No | When `true`, a failed check hard-fails the eval regardless of aggregate score. Defaults to `false`. |
 | `weight` | No | Numeric weight used in the aggregate score. Defaults to `1.0`. |
+| `min_score` | No | Minimum normalized score required for a judge check to pass. TypeSafe checks use this cutoff before applying `required`; when omitted, they use the eval `threshold`. |
 | `standard` | No | Referenced standard id or file for judge checks. Resolved from `.svdo/standards/`. |
 | `rubric` | No | Structured grading rubric for judge checks. Resolved from `.svdo/rubrics/<name>.yaml` or `.svdo/standards/<name>.rubric.yaml`. TypeSafe uses it as Score instructions and ordered criteria. Other judge backends receive it as additional request context. |
 | `event_type` | Yes for `telemetry` | Canonical telemetry event name to match, such as `tool.started`. |
