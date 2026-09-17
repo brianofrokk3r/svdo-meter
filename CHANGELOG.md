@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-09-17
+
+- Added a TypeSafe AI score-based eval judge backend selectable with `svdo-meter eval run --judge-backend typesafe` or a top-level eval `judge: backend: typesafe` block.
+- Added TypeSafe System One request construction with structured Score questions, ordered criteria, workspace state, standard context, optional rubric context, model selection, and API key environment configuration.
+- Added structured rubric support for judge checks via `rubric: <name>`, resolving rubrics from `.svdo/rubrics/` or `*.rubric.yaml` files under `.svdo/standards/`.
+- Normalized TypeSafe judge responses into existing eval results with provider identity, model, raw and normalized scores, confidence, probabilities, legend data, criteria, and token usage when returned.
+- Preserved the existing Codex, Claude, OpenCode, and custom command judge paths, with CLI judge settings taking precedence over eval-file judge defaults.
+- Added clear TypeSafe configuration and provider error handling for missing credentials, empty model/API key/url settings, invalid rubric files, unexpected answer types, and out-of-range scores, while reporting TypeSafe backend failures as failed judge checks instead of aborting the full eval run.
+- Updated terminal, CSV, JSON, CLI docs, CI secrets docs, README, and examples docs to explain TypeSafe judge usage, backend precedence, and the standard/rubric/judge split.
+- Added `examples/typesafe-judge/` with a sample eval, standard, and rubric demonstrating TypeSafe Score judging.
+- Added focused tests for TypeSafe backend selection, eval-file judge config, request construction, response normalization, missing credentials, rubric loading/validation, and unchanged existing judge behavior.
+
 ## 2026-09-15
 
 - Added CI secrets documentation for Codex, Claude Code, and OpenCode harness credentials, including `OPENAI_API_KEY`, optional `OPENAI_PROJECT_ID`, and `ANTHROPIC_API_KEY` guidance.

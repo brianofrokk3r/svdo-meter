@@ -1,6 +1,6 @@
 # CI Secrets and Harness Credentials
 
-SVDO Meter measures local harness CLI runs. It does not currently own provider API communication or make provider API requests directly. The selected harness process reads credentials from the environment it inherits from your shell or CI runner.
+SVDO Meter measures local harness CLI runs by default. For `svdo-meter run`, the selected harness process reads credentials from the environment it inherits from your shell or CI runner. TypeSafe-backed eval judging is the direct provider API path: `svdo-meter eval run --judge-backend typesafe` reads the TypeSafe API key from `TYPESAFE_API_KEY` by default, or from the variable named by `--typesafe-api-key-env`.
 
 Measured runs invoke harness commands shaped like:
 
@@ -19,6 +19,7 @@ Configure and validate the harness CLI first, then run `svdo-meter run` from the
 | Codex CLI | Set `OPENAI_API_KEY` for API-key based OpenAI/Codex usage. Set `OPENAI_PROJECT_ID` when the harness should target a specific OpenAI project. |
 | Claude Code CLI | Set `ANTHROPIC_API_KEY` when using API-key based Claude authentication. |
 | OpenCode CLI | Set the variables required by the configured OpenCode provider and model. For OpenAI-backed models, this commonly includes `OPENAI_API_KEY` and optionally `OPENAI_PROJECT_ID`. For Anthropic-backed models, this commonly includes `ANTHROPIC_API_KEY`. |
+| TypeSafe eval judge | Set `TYPESAFE_API_KEY`, or pass `--typesafe-api-key-env <ENV>` to use a differently named secured variable. |
 
 OpenAI's official documentation lists `OPENAI_API_KEY` as the API key environment variable for CLI use and lists `OPENAI_PROJECT_ID` as an optional CLI environment variable. The OpenAI API reference also documents API credentials as bearer credentials. Keep this as upstream context for OpenAI-backed harnesses; SVDO Meter still delegates actual authentication to the harness process.
 
@@ -30,6 +31,7 @@ Store provider credentials as secured Bitbucket repository or workspace variable
 
 - `OPENAI_API_KEY`: required for OpenAI/Codex-backed tooling.
 - `OPENAI_PROJECT_ID`: optional when using OpenAI projects.
+- `TYPESAFE_API_KEY`: required when CI runs `svdo-meter eval run --judge-backend typesafe`.
 - `ANTHROPIC_API_KEY`: required when the selected harness or OpenCode provider uses Claude.
 
 Bitbucket exposes repository and workspace variables to the build container as environment variables. When those variables are secured, Bitbucket hides matching values in logs. Use workspace variables for credentials shared across repositories and repository variables for repository-specific credentials.

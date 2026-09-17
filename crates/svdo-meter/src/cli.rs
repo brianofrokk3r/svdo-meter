@@ -3,7 +3,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use anyhow::Context;
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use meter_core::{ClaudeRunOptions, CodexSandboxMode, ExecutionPermissionMode, HarnessKind};
 use meter_report::PricingConfig;
 
@@ -94,7 +94,7 @@ pub struct EvalRunArgs {
     pub workspace: Option<PathBuf>,
 
     /// Harness used to run judge checks. Supported: codex, claude, opencode, gemini.
-    #[arg(long, value_name = "HARNESS", conflicts_with = "judge_command")]
+    #[arg(long, value_name = "HARNESS", conflicts_with_all = ["judge_command", "judge_backend"])]
     pub harness: Option<HarnessKind>,
 
     /// Model passed to the judge harness.
@@ -102,7 +102,7 @@ pub struct EvalRunArgs {
     pub model: Option<String>,
 
     /// Program used to run judge checks. Receives the judge request JSON path as its final argument.
-    #[arg(long, value_name = "PROGRAM")]
+    #[arg(long, value_name = "PROGRAM", conflicts_with = "judge_backend")]
     pub judge_command: Option<PathBuf>,
 
     /// Extra argument passed to --judge-command before the judge request JSON path.
@@ -114,9 +114,35 @@ pub struct EvalRunArgs {
     )]
     pub judge_args: Vec<String>,
 
+    /// Alternate judge backend. Supported: typesafe.
+    #[arg(long, value_name = "BACKEND")]
+    pub judge_backend: Option<JudgeBackend>,
+
+    /// TypeSafe System One model used by --judge-backend typesafe.
+    #[arg(long, value_name = "MODEL", default_value = "jev-latest")]
+    pub typesafe_model: String,
+
+    /// Environment variable containing the TypeSafe API key.
+    #[arg(long, value_name = "ENV", default_value = "TYPESAFE_API_KEY")]
+    pub typesafe_api_key_env: String,
+
+    /// TypeSafe System One endpoint.
+    #[arg(
+        long,
+        value_name = "URL",
+        default_value = "https://api.typesafe.ai/v1/systemone"
+    )]
+    pub typesafe_url: String,
+
     /// Output format for eval results.
     #[arg(long, default_value_t = ReportFormat::Terminal)]
     pub format: ReportFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum JudgeBackend {
+    #[value(name = "typesafe")]
+    TypeSafe,
 }
 
 #[derive(Debug, Args)]
@@ -528,8 +554,8 @@ mod tests {
     use meter_core::{CodexSandboxMode, ExecutionPermissionMode, HarnessKind};
 
     use super::{
-        Cli, Commands, EmitFormat, EvalCommands, ReportFormat, RunSink, TelemetryCommands,
-        claude_options, resolve_pricing, resolve_prompt,
+        Cli, Commands, EmitFormat, EvalCommands, JudgeBackend, ReportFormat, RunSink,
+        TelemetryCommands, claude_options, resolve_pricing, resolve_prompt,
     };
 
     #[test]
@@ -1289,6 +1315,32 @@ mod tests {
         assert_eq!(args.eval, None);
         assert_eq!(args.harness, Some(HarnessKind::OpenCode));
         assert_eq!(args.model.as_deref(), Some("github-copilot/gpt-5"));
+        Ok(())
+    }
+
+    #[test]
+    fn parses_eval_run_with_typesafe_judge_backend() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "eval",
+            "run",
+            "api-contract",
+            "--judge-backend",
+            "typesafe",
+            "--typesafe-model",
+            "jev-latest",
+            "--typesafe-api-key-env",
+            "SVDO_TYPESAFE_KEY",
+        ])?;
+        let Commands::Eval(args) = cli.command else {
+            panic!("expected eval command");
+        };
+        let EvalCommands::Run(args) = args.command;
+
+        assert_eq!(args.eval.as_deref(), Some("api-contract"));
+        assert_eq!(args.judge_backend, Some(JudgeBackend::TypeSafe));
+        assert_eq!(args.typesafe_model, "jev-latest");
+        assert_eq!(args.typesafe_api_key_env, "SVDO_TYPESAFE_KEY");
         Ok(())
     }
 
