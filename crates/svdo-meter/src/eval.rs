@@ -23,6 +23,9 @@ const MAX_JUDGE_OUTPUT_BYTES: usize = 1024 * 1024;
 const DEFAULT_TELEMETRY_MIN_COUNT: u64 = 1;
 const MAX_TYPESAFE_SNAPSHOT_BYTES: usize = 96 * 1024;
 const MAX_TYPESAFE_SOURCE_SNAPSHOT_BYTES: usize = 64 * 1024;
+const TYPESAFE_PASSING_NORMALIZED_SCORE: f64 = 0.75;
+const TYPESAFE_MAX_ATTEMPTS: u32 = 3;
+const TYPESAFE_INITIAL_BACKOFF: Duration = Duration::from_millis(250);
 const DEFAULT_TYPESAFE_MODEL: &str = "jev-latest";
 const DEFAULT_TYPESAFE_API_KEY_ENV: &str = "TYPESAFE_API_KEY";
 const DEFAULT_TYPESAFE_URL: &str = "https://api.typesafe.ai/v1/systemone";
@@ -1300,12 +1303,12 @@ fn normalize_typesafe_check_result(
         );
     }
     let normalized_score = answer.score / top_level as f64;
-    let passed = normalized_score > 0.0;
+    let passed = normalized_score >= TYPESAFE_PASSING_NORMALIZED_SCORE;
     let mut violations = Vec::new();
     if !passed {
         violations.push(format!(
-            "TypeSafe score {:.2} normalized to {:.2} did not provide passing evidence",
-            answer.score, normalized_score
+            "TypeSafe score {:.2} normalized to {:.2} is below passing threshold {:.2}",
+            answer.score, normalized_score, TYPESAFE_PASSING_NORMALIZED_SCORE
         ));
     }
 
@@ -1360,9 +1363,9 @@ fn default_typesafe_criteria() -> Vec<String> {
 fn collect_typesafe_workspace_snapshot(
     workspace: &Path,
 ) -> anyhow::Result<TypeSafeWorkspaceSnapshot> {
-    let status = git_output(workspace, ["status", "--short"])?;
-    let diff_stat = git_output(workspace, ["diff", "--stat"])?;
-    let diff = git_output(workspace, ["diff", "--"])?;
+    let status = git_output(workspace, ["status", "--short", "--", "."])?;
+    let diff_stat = git_output(workspace, ["diff", "--stat", "--", "."])?;
+    let diff = git_output(workspace, ["diff", "--", "."])?;
     let (diff, truncated) = truncate_snapshot(diff, MAX_TYPESAFE_SNAPSHOT_BYTES);
     let (source_files, source_truncated) = collect_typesafe_source_files(workspace)?;
     Ok(TypeSafeWorkspaceSnapshot {
@@ -1821,27 +1824,84 @@ fn call_typesafe_endpoint(
     api_key: String,
     request_body: String,
 ) -> anyhow::Result<TypeSafeResponse> {
-    let response = reqwest::blocking::Client::new()
-        .post(&endpoint)
-        .bearer_auth(api_key)
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .body(request_body)
-        .send()
-        .with_context(|| format!("failed to call TypeSafe System One endpoint `{endpoint}`"))?;
-    let status = response.status();
-    let body = response
-        .text()
-        .context("failed to read TypeSafe System One response body")?;
-    if !status.is_success() {
-        bail!(
-            "TypeSafe System One request failed with HTTP status {status}: {}",
-            truncate(&body, 4_000)
-        );
+    call_typesafe_endpoint_with_retry(
+        endpoint,
+        api_key,
+        request_body,
+        TYPESAFE_MAX_ATTEMPTS,
+        TYPESAFE_INITIAL_BACKOFF,
+    )
+}
+
+fn call_typesafe_endpoint_with_retry(
+    endpoint: String,
+    api_key: String,
+    request_body: String,
+    max_attempts: u32,
+    initial_backoff: Duration,
+) -> anyhow::Result<TypeSafeResponse> {
+    let client = reqwest::blocking::Client::new();
+    call_typesafe_endpoint_with_transport(max_attempts, initial_backoff, || {
+        let response = client
+            .post(&endpoint)
+            .bearer_auth(&api_key)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(request_body.clone())
+            .send()
+            .with_context(|| format!("failed to call TypeSafe System One endpoint `{endpoint}`"))?;
+        let status = response.status();
+        let body = response
+            .text()
+            .context("failed to read TypeSafe System One response body")?;
+        Ok((status, body))
+    })
+}
+
+fn call_typesafe_endpoint_with_transport<F>(
+    max_attempts: u32,
+    initial_backoff: Duration,
+    mut send: F,
+) -> anyhow::Result<TypeSafeResponse>
+where
+    F: FnMut() -> anyhow::Result<(reqwest::StatusCode, String)>,
+{
+    let max_attempts = max_attempts.max(1);
+    let mut backoff = initial_backoff;
+    let mut last_retryable_failure = None;
+    for attempt in 1..=max_attempts {
+        let (status, body) = send()?;
+        if status.is_success() {
+            return parse_typesafe_response(&body);
+        }
+        if !is_retryable_typesafe_status(status) || attempt == max_attempts {
+            bail!(
+                "TypeSafe System One request failed with HTTP status {status}: {}",
+                truncate(&body, 4_000)
+            );
+        }
+        last_retryable_failure = Some((status, body));
+        if !backoff.is_zero() {
+            std::thread::sleep(backoff);
+            backoff = backoff.saturating_mul(2);
+        }
     }
-    serde_json::from_str(&body).with_context(|| {
+    let (status, body) =
+        last_retryable_failure.expect("retry loop records a retryable failure before exhausting");
+    bail!(
+        "TypeSafe System One request failed with HTTP status {status}: {}",
+        truncate(&body, 4_000)
+    )
+}
+
+fn is_retryable_typesafe_status(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.as_u16() == 529
+}
+
+fn parse_typesafe_response(body: &str) -> anyhow::Result<TypeSafeResponse> {
+    serde_json::from_str(body).with_context(|| {
         format!(
             "failed to parse TypeSafe System One response JSON: {}",
-            truncate(&body, 4_000)
+            truncate(body, 4_000)
         )
     })
 }
@@ -3235,6 +3295,40 @@ checks:
     }
 
     #[test]
+    fn typesafe_git_snapshot_is_scoped_to_workspace() -> anyhow::Result<()> {
+        let repo = unique_temp_path("svdo-meter-eval-typesafe-git-scope");
+        let workspace = repo.join("examples").join("typesafe-judge");
+        fs::create_dir_all(&workspace)?;
+        fs::create_dir_all(repo.join("docs"))?;
+        fs::write(workspace.join("calc.py"), "print('old')\n")?;
+        fs::write(repo.join("docs").join("outside.txt"), "outside\n")?;
+        let init = Command::new("git")
+            .arg("init")
+            .arg("--quiet")
+            .current_dir(&repo)
+            .output()
+            .context("failed to initialize test git repository")?;
+        assert!(init.status.success());
+        let add = Command::new("git")
+            .arg("add")
+            .arg("examples/typesafe-judge/calc.py")
+            .current_dir(&repo)
+            .output()
+            .context("failed to stage workspace file")?;
+        assert!(add.status.success());
+        fs::write(workspace.join("calc.py"), "print('workspace')\n")?;
+
+        let snapshot = collect_typesafe_workspace_snapshot(&workspace)?;
+
+        let status = snapshot.status.unwrap_or_default();
+        assert!(status.contains("calc.py"));
+        assert!(!status.contains("outside.txt"));
+        assert!(snapshot.source_files.contains_key("calc.py"));
+        fs::remove_dir_all(repo)?;
+        Ok(())
+    }
+
+    #[test]
     fn loads_typesafe_rubric_from_rubrics_directory() -> anyhow::Result<()> {
         let workspace = unique_temp_path("svdo-meter-eval-rubric-load");
         fs::create_dir_all(workspace.join(".svdo").join("rubrics"))?;
@@ -3417,6 +3511,45 @@ criteria:
     }
 
     #[test]
+    fn typesafe_low_nonzero_score_fails_check() -> anyhow::Result<()> {
+        let check = CheckDefinition {
+            id: "implementation-quality".to_owned(),
+            check_type: CheckType::Judge,
+            command: None,
+            required: true,
+            weight: 0.4,
+            standard: Some("calculator-quality".to_owned()),
+            rubric: Some("calculator-implementation".to_owned()),
+            event_type: None,
+            tool_name: None,
+            min_count: DEFAULT_TELEMETRY_MIN_COUNT,
+        };
+        let prepared = PreparedJudgeCheck {
+            check_id: check.id.clone(),
+            standard: check.standard.clone(),
+            standard_path: Some("/tmp/calculator-quality.md".to_owned()),
+            standard_contents: Some("standard".to_owned()),
+            rubric: None,
+            criteria: default_typesafe_criteria(),
+        };
+        let answer = TypeSafeScoreAnswer {
+            answer_type: "score".to_owned(),
+            score: 1.0,
+            confidence: None,
+            probabilities: BTreeMap::new(),
+            legend: BTreeMap::new(),
+        };
+
+        let result =
+            normalize_typesafe_check_result(&check, &prepared, &answer, None, None, 100, "jev")?;
+
+        assert_eq!(result.score, Some(0.25));
+        assert_eq!(result.outcome, CheckOutcome::Failed);
+        assert!(result.violations[0].contains("is below passing threshold"));
+        Ok(())
+    }
+
+    #[test]
     fn missing_typesafe_api_key_is_actionable() {
         let judge = TypeSafeJudge {
             endpoint: "https://api.typesafe.ai/v1/systemone".to_owned(),
@@ -3486,6 +3619,53 @@ criteria:
 
             assert!(error.to_string().contains("failed to call TypeSafe"));
         });
+        Ok(())
+    }
+
+    #[test]
+    fn typesafe_http_retries_retryable_statuses() -> anyhow::Result<()> {
+        let mut responses = vec![
+            (
+                reqwest::StatusCode::TOO_MANY_REQUESTS,
+                r#"{"error":"rate limited"}"#.to_owned(),
+            ),
+            (
+                reqwest::StatusCode::OK,
+                r#"{"model":"jev-latest","answers":{},"usage":{"input_tokens":1,"output_tokens":1}}"#
+                    .to_owned(),
+            ),
+        ]
+        .into_iter();
+
+        let response = call_typesafe_endpoint_with_transport(2, Duration::ZERO, || {
+            Ok(responses.next().expect("unexpected extra request"))
+        })?;
+
+        assert_eq!(response.model.as_deref(), Some("jev-latest"));
+        Ok(())
+    }
+
+    #[test]
+    fn typesafe_http_stops_after_max_attempts() -> anyhow::Result<()> {
+        let mut responses = vec![
+            (
+                reqwest::StatusCode::from_u16(529)?,
+                r#"{"error":"overloaded once"}"#.to_owned(),
+            ),
+            (
+                reqwest::StatusCode::from_u16(529)?,
+                r#"{"error":"overloaded twice"}"#.to_owned(),
+            ),
+        ]
+        .into_iter();
+
+        let error = call_typesafe_endpoint_with_transport(2, Duration::ZERO, || {
+            Ok(responses.next().expect("unexpected extra request"))
+        })
+        .expect_err("retryable failures should stop at max attempts");
+
+        assert!(error.to_string().contains("HTTP status 529"));
+        assert!(error.to_string().contains("overloaded twice"));
         Ok(())
     }
 
