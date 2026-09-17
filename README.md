@@ -234,6 +234,8 @@ codex exec --json -C ~/code/app "Implement the password reset flow described in 
 
 Use `--dangerous-bypass` only when the selected harness should bypass approval and sandbox protections. SVDO Meter records that posture on `run.started` telemetry.
 
+Use `--codex-skip-git-repo-check` with the Codex harness when intentionally measuring work in a disposable or otherwise untrusted workspace that is not a git repository.
+
 ## Run Claude Code With Telemetry
 
 Claude Code runs use non-interactive print mode with stream JSON so SVDO Meter can normalize live events without a TTY:
