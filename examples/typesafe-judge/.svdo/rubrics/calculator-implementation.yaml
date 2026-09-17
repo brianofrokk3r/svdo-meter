@@ -1,0 +1,10 @@
+instructions: |
+  Evaluate the calculator implementation using the task, source_files snapshot,
+  command-test result context, and calculator quality standard. Select the
+  highest level that is fully supported by evidence in the workspace.
+criteria:
+  - No meaningful calculator implementation is present.
+  - Some operations exist, but major behavior, validation, or CLI wiring is missing.
+  - All core operations mostly work, with notable validation or design gaps.
+  - The CLI satisfies the task with minor style, edge-case, or maintainability issues.
+  - The implementation is complete, script-friendly, well validated, and easy to test.
