@@ -137,6 +137,10 @@ pub struct RunArgs {
     #[arg(long)]
     pub workspace: Option<PathBuf>,
 
+    /// Directory where durable meter telemetry is written. Defaults to <workspace>/.svdo/meter/.
+    #[arg(long, value_name = "PATH")]
+    pub output_dir: Option<PathBuf>,
+
     /// Provider session/thread ID to resume instead of auto-discovery.
     #[arg(long)]
     pub session: Option<String>,
@@ -559,6 +563,7 @@ mod tests {
             args.workspace.as_deref(),
             Some(std::path::Path::new("/tmp/workspace"))
         );
+        assert_eq!(args.output_dir, None);
         assert_eq!(args.session.as_deref(), Some("sess-123"));
         assert_eq!(args.model.as_deref(), Some("gpt-5"));
         assert!(args.dangerous_bypass);
@@ -613,6 +618,31 @@ mod tests {
 
         assert_eq!(args.sinks, vec![RunSink::Jsonl, RunSink::Stdout]);
         assert_eq!(args.emit, Some(EmitFormat::Ndjson));
+        Ok(())
+    }
+
+    #[test]
+    fn parses_run_output_dir() -> anyhow::Result<()> {
+        let cli = Cli::try_parse_from([
+            "svdo-meter",
+            "run",
+            "--ticket",
+            "ENG-142",
+            "--harness",
+            "codex",
+            "--output-dir",
+            "/tmp/svdo-meter",
+            "Do work",
+        ])?;
+        let Commands::Run(args) = cli.command else {
+            panic!("expected run command");
+        };
+
+        assert_eq!(
+            args.output_dir.as_deref(),
+            Some(std::path::Path::new("/tmp/svdo-meter"))
+        );
+        assert_eq!(resolve_prompt(&args)?, "Do work");
         Ok(())
     }
 
