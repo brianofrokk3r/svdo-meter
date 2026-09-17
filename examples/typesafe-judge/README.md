@@ -1,18 +1,32 @@
-# TypeSafe Judge Example
+# TypeSafe Judge Calculator Example
 
-This example shows the intended split between judge backend, standard, and rubric.
+This example shows TypeSafe scoring against a concrete generated artifact: a
+small Python calculator CLI.
 
 ```text
-.svdo/evals/api-contract.yaml
-.svdo/standards/api-architecture.md
-.svdo/rubrics/architecture-alignment.yaml
+calc.py
+test_calc.py
+.svdo/evals/calculator-quality.yaml
+.svdo/standards/calculator-quality.md
+.svdo/rubrics/calculator-implementation.yaml
 ```
 
-Run from a workspace containing those files:
+Run the local tests:
+
+```bash
+python -m unittest test_calc.py
+```
+
+Run the eval from the repository root:
 
 ```bash
 export TYPESAFE_API_KEY=...
-svdo-meter eval run api-contract --workspace .
+cargo run -p svdo-meter --bin svdo-meter -- \
+  eval run calculator-quality \
+  --workspace examples/typesafe-judge
 ```
 
-The eval selects TypeSafe as the judge backend. The standard is the rulebook, and the rubric is the ordered grading scale TypeSafe uses for the Score question.
+The eval uses a command check for calculator behavior and a TypeSafe-backed
+judge check for implementation quality. The TypeSafe request includes the task,
+standard, ordered Score criteria, git snapshot data when available, and a
+bounded snapshot of source files such as `calc.py` and `test_calc.py`.

@@ -1,0 +1,26 @@
+id: calculator-quality
+
+task: |
+  Review the generated Python calculator CLI in this workspace. It should
+  implement add, subtract, multiply, and divide with clear validation and
+  predictable command-line behavior.
+
+judge:
+  backend: typesafe
+  model: jev-latest
+
+checks:
+  - id: calculator-tests
+    type: command
+    command: python -m unittest test_calc.py
+    required: true
+    weight: 0.6
+
+  - id: implementation-quality
+    type: judge
+    standard: calculator-quality
+    rubric: calculator-implementation
+    required: true
+    weight: 0.4
+
+threshold: 0.85

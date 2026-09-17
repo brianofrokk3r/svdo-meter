@@ -22,6 +22,7 @@ use crate::cli::{JudgeBackend, ReportFormat};
 const MAX_JUDGE_OUTPUT_BYTES: usize = 1024 * 1024;
 const DEFAULT_TELEMETRY_MIN_COUNT: u64 = 1;
 const MAX_TYPESAFE_SNAPSHOT_BYTES: usize = 96 * 1024;
+const MAX_TYPESAFE_SOURCE_SNAPSHOT_BYTES: usize = 64 * 1024;
 const DEFAULT_TYPESAFE_MODEL: &str = "jev-latest";
 const DEFAULT_TYPESAFE_API_KEY_ENV: &str = "TYPESAFE_API_KEY";
 const DEFAULT_TYPESAFE_URL: &str = "https://api.typesafe.ai/v1/systemone";
@@ -226,6 +227,8 @@ struct TypeSafeWorkspaceSnapshot {
     status: Option<String>,
     diff_stat: Option<String>,
     diff: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    source_files: BTreeMap<String, String>,
     truncated: bool,
 }
 
@@ -1297,11 +1300,11 @@ fn normalize_typesafe_check_result(
         );
     }
     let normalized_score = answer.score / top_level as f64;
-    let passed = normalized_score >= 1.0;
+    let passed = normalized_score > 0.0;
     let mut violations = Vec::new();
     if !passed {
         violations.push(format!(
-            "TypeSafe score {:.2} normalized to {:.2} did not pass",
+            "TypeSafe score {:.2} normalized to {:.2} did not provide passing evidence",
             answer.score, normalized_score
         ));
     }
@@ -1361,12 +1364,133 @@ fn collect_typesafe_workspace_snapshot(
     let diff_stat = git_output(workspace, ["diff", "--stat"])?;
     let diff = git_output(workspace, ["diff", "--"])?;
     let (diff, truncated) = truncate_snapshot(diff, MAX_TYPESAFE_SNAPSHOT_BYTES);
+    let (source_files, source_truncated) = collect_typesafe_source_files(workspace)?;
     Ok(TypeSafeWorkspaceSnapshot {
         status,
         diff_stat,
         diff,
-        truncated,
+        source_files,
+        truncated: truncated || source_truncated,
     })
+}
+
+fn collect_typesafe_source_files(
+    workspace: &Path,
+) -> anyhow::Result<(BTreeMap<String, String>, bool)> {
+    let mut paths = Vec::new();
+    collect_typesafe_source_paths(workspace, workspace, &mut paths)?;
+    paths.sort();
+
+    let mut files = BTreeMap::new();
+    let mut used_bytes = 0usize;
+    let mut truncated = false;
+    for path in paths {
+        let bytes = fs::read(&path)
+            .with_context(|| format!("failed to read source file `{}`", path.display()))?;
+        let Ok(contents) = String::from_utf8(bytes) else {
+            continue;
+        };
+        let relative = path
+            .strip_prefix(workspace)
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        let remaining = MAX_TYPESAFE_SOURCE_SNAPSHOT_BYTES.saturating_sub(used_bytes);
+        if remaining == 0 {
+            truncated = true;
+            break;
+        }
+        let (contents, file_truncated) = truncate_source_file(contents, remaining);
+        used_bytes += relative.len() + contents.len();
+        truncated |= file_truncated;
+        files.insert(relative, contents);
+        if file_truncated {
+            break;
+        }
+    }
+
+    Ok((files, truncated))
+}
+
+fn collect_typesafe_source_paths(
+    workspace: &Path,
+    dir: &Path,
+    paths: &mut Vec<PathBuf>,
+) -> anyhow::Result<()> {
+    for entry in fs::read_dir(dir)
+        .with_context(|| format!("failed to read directory `{}`", dir.display()))?
+    {
+        let path = entry
+            .with_context(|| format!("failed to read directory entry in `{}`", dir.display()))?
+            .path();
+        let Some(name) = path.file_name().and_then(OsStr::to_str) else {
+            continue;
+        };
+        if path.is_dir() {
+            if matches!(
+                name,
+                ".git" | ".svdo" | "target" | "node_modules" | "__pycache__"
+            ) {
+                continue;
+            }
+            collect_typesafe_source_paths(workspace, &path, paths)?;
+        } else if path.is_file() && is_typesafe_source_file(workspace, &path) {
+            paths.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn is_typesafe_source_file(workspace: &Path, path: &Path) -> bool {
+    if path == workspace.join("Cargo.lock") {
+        return false;
+    }
+    matches!(
+        path.extension().and_then(OsStr::to_str),
+        Some(
+            "c" | "cc"
+                | "cpp"
+                | "cs"
+                | "go"
+                | "h"
+                | "hpp"
+                | "java"
+                | "js"
+                | "jsx"
+                | "json"
+                | "kt"
+                | "md"
+                | "php"
+                | "py"
+                | "rb"
+                | "rs"
+                | "sh"
+                | "swift"
+                | "toml"
+                | "ts"
+                | "tsx"
+                | "txt"
+                | "yaml"
+                | "yml"
+        )
+    )
+}
+
+fn truncate_source_file(value: String, max_bytes: usize) -> (String, bool) {
+    if value.len() <= max_bytes {
+        return (value, false);
+    }
+    let mut boundary = max_bytes;
+    while !value.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    (
+        format!(
+            "{}\n\n[truncated TypeSafe source snapshot to {max_bytes} bytes]",
+            &value[..boundary]
+        ),
+        true,
+    )
 }
 
 fn git_output<const N: usize>(workspace: &Path, args: [&str; N]) -> anyhow::Result<Option<String>> {
@@ -1676,34 +1800,50 @@ impl TypeSafeJudge {
             );
         }
 
-        let response = reqwest::blocking::Client::new()
-            .post(&self.endpoint)
-            .bearer_auth(api_key)
-            .json(request)
-            .send()
-            .with_context(|| {
-                format!(
-                    "failed to call TypeSafe System One endpoint `{}`",
-                    self.endpoint
-                )
-            })?;
-        let status = response.status();
-        let body = response
-            .text()
-            .context("failed to read TypeSafe System One response body")?;
-        if !status.is_success() {
-            bail!(
-                "TypeSafe System One request failed with HTTP status {status}: {}",
-                truncate(&body, 4_000)
-            );
-        }
-        serde_json::from_str(&body).with_context(|| {
-            format!(
-                "failed to parse TypeSafe System One response JSON: {}",
-                truncate(&body, 4_000)
-            )
-        })
+        let endpoint = self.endpoint.clone();
+        let request_body =
+            serde_json::to_string(request).context("failed to serialize TypeSafe request JSON")?;
+        std::thread::spawn(move || call_typesafe_endpoint(endpoint, api_key, request_body))
+            .join()
+            .map_err(|panic| {
+                let message = panic
+                    .downcast_ref::<&str>()
+                    .copied()
+                    .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+                    .unwrap_or("unknown panic");
+                anyhow::anyhow!("TypeSafe System One request worker panicked: {message}")
+            })?
     }
+}
+
+fn call_typesafe_endpoint(
+    endpoint: String,
+    api_key: String,
+    request_body: String,
+) -> anyhow::Result<TypeSafeResponse> {
+    let response = reqwest::blocking::Client::new()
+        .post(&endpoint)
+        .bearer_auth(api_key)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(request_body)
+        .send()
+        .with_context(|| format!("failed to call TypeSafe System One endpoint `{endpoint}`"))?;
+    let status = response.status();
+    let body = response
+        .text()
+        .context("failed to read TypeSafe System One response body")?;
+    if !status.is_success() {
+        bail!(
+            "TypeSafe System One request failed with HTTP status {status}: {}",
+            truncate(&body, 4_000)
+        );
+    }
+    serde_json::from_str(&body).with_context(|| {
+        format!(
+            "failed to parse TypeSafe System One response JSON: {}",
+            truncate(&body, 4_000)
+        )
+    })
 }
 
 impl From<&TypeSafeUsage> for TokenUsage {
@@ -3001,6 +3141,10 @@ checks:
                 .join("api-architecture.md"),
             "# API Architecture\n\nUse clear boundaries.",
         )?;
+        fs::write(
+            workspace.join("calc.py"),
+            "def add(left, right):\n    return left + right\n",
+        )?;
         let definition = EvalDefinition {
             id: "typesafe".to_owned(),
             task: "Add account endpoint".to_owned(),
@@ -3076,6 +3220,15 @@ checks:
                 .and_then(|check| check.rubric.as_ref())
                 .map(|rubric| rubric.id.as_str()),
             Some("architecture-alignment")
+        );
+        assert_eq!(
+            request
+                .state
+                .workspace_snapshot
+                .source_files
+                .get("calc.py")
+                .map(String::as_str),
+            Some("def add(left, right):\n    return left + right\n")
         );
         fs::remove_dir_all(workspace)?;
         Ok(())
@@ -3191,6 +3344,7 @@ criteria:
         )?;
 
         assert_eq!(result.score, Some(0.75));
+        assert_eq!(result.outcome, CheckOutcome::Passed);
         assert_eq!(result.harness.as_deref(), Some("typesafe"));
         assert_eq!(result.model.as_deref(), Some("jev-latest"));
         assert_eq!(
@@ -3211,6 +3365,58 @@ criteria:
     }
 
     #[test]
+    fn typesafe_partial_score_can_pass_weighted_eval() -> anyhow::Result<()> {
+        let check = CheckDefinition {
+            id: "implementation-quality".to_owned(),
+            check_type: CheckType::Judge,
+            command: None,
+            required: true,
+            weight: 0.4,
+            standard: Some("calculator-quality".to_owned()),
+            rubric: Some("calculator-implementation".to_owned()),
+            event_type: None,
+            tool_name: None,
+            min_count: DEFAULT_TELEMETRY_MIN_COUNT,
+        };
+        let prepared = PreparedJudgeCheck {
+            check_id: check.id.clone(),
+            standard: check.standard.clone(),
+            standard_path: Some("/tmp/calculator-quality.md".to_owned()),
+            standard_contents: Some("standard".to_owned()),
+            rubric: None,
+            criteria: vec![
+                "No meaningful calculator implementation is present.".to_owned(),
+                "Some operations exist, but major behavior is missing.".to_owned(),
+                "All core operations mostly work.".to_owned(),
+                "The CLI satisfies the task with minor issues.".to_owned(),
+                "The implementation is complete and easy to test.".to_owned(),
+            ],
+        };
+        let answer = TypeSafeScoreAnswer {
+            answer_type: "score".to_owned(),
+            score: 3.49,
+            confidence: None,
+            probabilities: BTreeMap::new(),
+            legend: BTreeMap::new(),
+        };
+
+        let result = normalize_typesafe_check_result(
+            &check,
+            &prepared,
+            &answer,
+            Some("jev-1.13.0"),
+            None,
+            973,
+            "jev-latest",
+        )?;
+
+        assert_eq!(result.outcome, CheckOutcome::Passed);
+        assert_eq!(result.score, Some(0.8725));
+        assert!(result.violations.is_empty());
+        Ok(())
+    }
+
+    #[test]
     fn missing_typesafe_api_key_is_actionable() {
         let judge = TypeSafeJudge {
             endpoint: "https://api.typesafe.ai/v1/systemone".to_owned(),
@@ -3227,6 +3433,7 @@ criteria:
                     status: None,
                     diff_stat: None,
                     diff: None,
+                    source_files: BTreeMap::new(),
                     truncated: false,
                 },
             },
@@ -3244,6 +3451,42 @@ criteria:
                 .to_string()
                 .contains("SVDO_TYPESAFE_KEY_DOES_NOT_EXIST_FOR_TEST")
         );
+    }
+
+    #[test]
+    fn typesafe_blocking_http_is_safe_inside_tokio_runtime() -> anyhow::Result<()> {
+        let runtime = tokio::runtime::Runtime::new()?;
+        runtime.block_on(async {
+            let judge = TypeSafeJudge {
+                endpoint: "http://127.0.0.1:9/systemone".to_owned(),
+                model: "jev-latest".to_owned(),
+                api_key_env: "PATH".to_owned(),
+            };
+            let request = TypeSafeRequest {
+                state: TypeSafeState {
+                    eval_id: "tokio-runtime".to_owned(),
+                    task: "task".to_owned(),
+                    workspace: "/tmp".to_owned(),
+                    checks: BTreeMap::new(),
+                    workspace_snapshot: TypeSafeWorkspaceSnapshot {
+                        status: None,
+                        diff_stat: None,
+                        diff: None,
+                        source_files: BTreeMap::new(),
+                        truncated: false,
+                    },
+                },
+                model: "jev-latest".to_owned(),
+                questions: BTreeMap::new(),
+            };
+
+            let error = judge
+                .run(&request)
+                .expect_err("unreachable endpoint should fail without panicking");
+
+            assert!(error.to_string().contains("failed to call TypeSafe"));
+        });
+        Ok(())
     }
 
     #[test]

@@ -1,9 +1,0 @@
-instructions: |
-  Evaluate how well the implementation follows the API architecture standard for
-  the requested task. Use the standard, workspace snapshot, and task context in
-  state. Select the highest criterion level that is fully supported by evidence.
-criteria:
-  - No meaningful alignment with the architecture standard.
-  - Partial alignment with major architectural gaps or unverified behavior.
-  - Mostly aligned with minor issues or limited uncertainty.
-  - Fully aligned with the architecture standard and task intent.
