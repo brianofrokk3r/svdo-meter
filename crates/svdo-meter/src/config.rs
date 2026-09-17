@@ -490,6 +490,7 @@ mod tests {
             label: None,
             harness,
             workspace: None,
+            output_dir: None,
             session: None,
             model: None,
             dangerous_bypass: false,

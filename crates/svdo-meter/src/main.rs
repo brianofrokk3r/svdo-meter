@@ -98,10 +98,11 @@ async fn main() -> anyhow::Result<()> {
                 .context("invalid --session value")?;
             let engine = wiring::engine(
                 &args.workspace,
+                &args.output_dir,
                 args.harness,
                 &harness_config.config,
                 sink_selection,
-            );
+            )?;
             let outcome = engine
                 .run(RunRequest {
                     ticket_id,
