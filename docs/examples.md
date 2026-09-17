@@ -2,6 +2,29 @@
 
 This page keeps fuller runnable examples out of the README while preserving copy-pasteable workflows.
 
+## TypeSafe Judge Rubric
+
+The TypeSafe judge example shows the portable eval-file configuration for a score-based judge:
+
+```text
+examples/typesafe-judge/.svdo/evals/api-contract.yaml
+examples/typesafe-judge/.svdo/standards/api-architecture.md
+examples/typesafe-judge/.svdo/rubrics/architecture-alignment.yaml
+```
+
+It demonstrates the intended split:
+
+- `judge`: selects TypeSafe as the scoring backend.
+- `standard`: provides the rulebook or reference material.
+- `rubric`: provides the ordered Score criteria.
+
+Run it from a workspace with TypeSafe credentials:
+
+```bash
+export TYPESAFE_API_KEY=...
+svdo-meter eval run api-contract --workspace examples/typesafe-judge
+```
+
 ## Label-Grouped Reporting: Plan vs Implement
 
 The label-grouped reporting example demonstrates a small feature workflow where one measured run is labeled `plan` and a second measured run is labeled `implement`.

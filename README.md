@@ -175,7 +175,7 @@ Prerequisites:
 
 ## Harness API Keys and CI Secrets
 
-SVDO Meter does not currently own provider API communication. It shells out to the selected harness CLI and lets that child process read credentials from its environment. Configure and validate `codex`, `claude`, or `opencode` the same way you would before running that CLI directly.
+For measured harness runs, SVDO Meter shells out to the selected harness CLI and lets that child process read credentials from its environment. Configure and validate `codex`, `claude`, or `opencode` the same way you would before running that CLI directly. TypeSafe-backed eval judging is the exception: `svdo-meter eval run --judge-backend typesafe` calls the TypeSafe System One API directly and reads its API key from `TYPESAFE_API_KEY` by default.
 
 | Harness | Typical credential environment |
 |---|---|
