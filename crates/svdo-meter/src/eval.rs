@@ -170,6 +170,15 @@ struct PreparedJudgeCheck {
     criteria: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct TypeSafeCheckContext<'a> {
+    response_model: Option<&'a str>,
+    usage: Option<&'a TypeSafeUsage>,
+    duration_ms: u128,
+    requested_model: &'a str,
+    default_passing_score: f64,
+}
+
 #[derive(Debug, Clone)]
 struct PreparedRubric {
     id: String,
@@ -1205,11 +1214,13 @@ fn run_typesafe_judge_checks(
             check,
             prepared_check,
             answer,
-            response.model.as_deref(),
-            response.usage.as_ref(),
-            duration_ms,
-            &judge.model,
-            definition.threshold,
+            TypeSafeCheckContext {
+                response_model: response.model.as_deref(),
+                usage: response.usage.as_ref(),
+                duration_ms,
+                requested_model: &judge.model,
+                default_passing_score: definition.threshold,
+            },
         )?;
         results.insert(check.id.clone(), result);
     }
@@ -1276,11 +1287,7 @@ fn normalize_typesafe_check_result(
     check: &CheckDefinition,
     prepared: &PreparedJudgeCheck,
     answer: &TypeSafeScoreAnswer,
-    response_model: Option<&str>,
-    usage: Option<&TypeSafeUsage>,
-    duration_ms: u128,
-    requested_model: &str,
-    default_passing_score: f64,
+    context: TypeSafeCheckContext<'_>,
 ) -> anyhow::Result<CheckResult> {
     if answer.answer_type != "score" {
         bail!(
@@ -1305,7 +1312,7 @@ fn normalize_typesafe_check_result(
         );
     }
     let normalized_score = answer.score / top_level as f64;
-    let passing_score = check.min_score.unwrap_or(default_passing_score);
+    let passing_score = check.min_score.unwrap_or(context.default_passing_score);
     let passed = normalized_score >= passing_score;
     let mut violations = Vec::new();
     if !passed {
@@ -1326,17 +1333,18 @@ fn normalize_typesafe_check_result(
         required: check.required,
         weight: check.weight,
         score: Some(normalized_score),
-        duration_ms,
+        duration_ms: context.duration_ms,
         command: Some("typesafe systemone".to_owned()),
         exit_code: None,
         standard: check.standard.clone(),
         standard_path: prepared.standard_path.clone(),
         violations,
         output: None,
-        token_usage: usage.map(TokenUsage::from),
-        model: response_model
+        token_usage: context.usage.map(TokenUsage::from),
+        model: context
+            .response_model
             .map(str::to_owned)
-            .or_else(|| Some(requested_model.to_owned())),
+            .or_else(|| Some(context.requested_model.to_owned())),
         harness: Some("typesafe".to_owned()),
         session_id: None,
         typesafe: Some(TypeSafeScoreMetadata {
@@ -3454,11 +3462,13 @@ criteria:
             &check,
             &prepared,
             &answer,
-            Some("jev-latest"),
-            Some(&usage),
-            25,
-            "jev-latest",
-            0.75,
+            TypeSafeCheckContext {
+                response_model: Some("jev-latest"),
+                usage: Some(&usage),
+                duration_ms: 25,
+                requested_model: "jev-latest",
+                default_passing_score: 0.75,
+            },
         )?;
 
         assert_eq!(result.score, Some(0.75));
@@ -3523,11 +3533,13 @@ criteria:
             &check,
             &prepared,
             &answer,
-            Some("jev-1.13.0"),
-            None,
-            973,
-            "jev-latest",
-            0.9,
+            TypeSafeCheckContext {
+                response_model: Some("jev-1.13.0"),
+                usage: None,
+                duration_ms: 973,
+                requested_model: "jev-latest",
+                default_passing_score: 0.9,
+            },
         )?;
 
         assert_eq!(result.outcome, CheckOutcome::Passed);
@@ -3568,7 +3580,16 @@ criteria:
         };
 
         let result = normalize_typesafe_check_result(
-            &check, &prepared, &answer, None, None, 100, "jev", 0.5,
+            &check,
+            &prepared,
+            &answer,
+            TypeSafeCheckContext {
+                response_model: None,
+                usage: None,
+                duration_ms: 100,
+                requested_model: "jev",
+                default_passing_score: 0.5,
+            },
         )?;
 
         assert_eq!(result.score, Some(0.25));
