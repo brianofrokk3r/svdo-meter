@@ -103,6 +103,19 @@ SVDO Meter writes append-only telemetry to:
 ~/code/app/.svdo/meter/<run-id>.jsonl
 ```
 
+To keep meter artifacts outside the source workspace, pass an explicit output directory to `svdo-meter run`:
+
+```bash
+svdo-meter run \
+  --ticket ENG-142 \
+  --harness codex \
+  --workspace "$SVDO_WORKSPACE" \
+  --output-dir "$SVDO_TMPDIR/meter" \
+  "Implement ENG-142"
+```
+
+When `--output-dir` is omitted, the default remains `<workspace>/.svdo/meter/`.
+
 The report output looks like this fixture-backed example:
 
 ```text
@@ -234,6 +247,8 @@ codex exec --json -C ~/code/app "Implement the password reset flow described in 
 
 Use `--dangerous-bypass` only when the selected harness should bypass approval and sandbox protections. SVDO Meter records that posture on `run.started` telemetry.
 
+Use `--codex-skip-git-repo-check` with the Codex harness when intentionally measuring work in a disposable or otherwise untrusted workspace that is not a git repository.
+
 ## Run Claude Code With Telemetry
 
 Claude Code runs use non-interactive print mode with stream JSON so SVDO Meter can normalize live events without a TTY:
@@ -292,7 +307,7 @@ svdo-meter run \
   --prompt-file prompts/eng-142.md
 ```
 
-To pipe live normalized events to another process, enable stdout NDJSON output. Durable `.svdo/meter/` telemetry is still written:
+To pipe live normalized events to another process, enable stdout NDJSON output. Durable JSONL telemetry is still written, using `--output-dir` when provided:
 
 ```bash
 svdo-meter run \
@@ -304,6 +319,29 @@ svdo-meter run \
 ```
 
 Equivalent sink selection is available with `--sink stdout`; `--sink jsonl` explicitly selects the durable local JSONL sink. Supplying both `--sink stdout` and `--emit ndjson` produces one stdout event stream, not duplicate records.
+
+## Configure Run Output Directory
+
+`svdo-meter run` writes durable JSONL telemetry under `<workspace>/.svdo/meter/` by default. Use `--output-dir <PATH>` when a container or worker should keep meter artifacts in an infrastructure-owned directory instead:
+
+```bash
+svdo-meter run \
+  --ticket ENG-142 \
+  --harness codex \
+  --workspace "$SVDO_WORKSPACE" \
+  --output-dir "$SVDO_TMPDIR/meter" \
+  --prompt-file "$SVDO_METER_CONFIG/prompt.md"
+```
+
+This works well with worker launchers that append meter arguments through `SVDO_METER_EXTRA_ARGS`, for example:
+
+```bash
+export SVDO_METER_EXTRA_ARGS="--output-dir $SVDO_TMPDIR/meter"
+```
+
+The directory is created before telemetry is written. If the path cannot be created or is not usable as a directory, the run fails with an error that includes the target path.
+
+`--output-dir` only changes where `svdo-meter run` writes telemetry. Existing `svdo-meter report`, `compare`, `eval`, and `telemetry` commands continue to read their documented workspace locations such as `<workspace>/.svdo/meter/`, `<workspace>/.svdo/evals/`, and `<workspace>/.svdo/runs/`.
 
 ## Resume A Known Session
 
@@ -500,7 +538,9 @@ By default, events are written to:
 .svdo/meter/<run-id>.jsonl
 ```
 
-Each line is one immutable canonical JSON event. The `.svdo/meter/` directory is the source of truth; session registries and reports are rebuildable projections.
+For measured runs, `--output-dir <PATH>` writes those per-run JSONL files to the configured directory instead. This is intended for containerized worker runs that mount or collect meter artifacts separately from the project source tree.
+
+Each line is one immutable canonical JSON event. The selected meter directory is the source of truth; session registries and reports are rebuildable projections.
 
 The local JSONL sink is enabled by default and remains active when `svdo-meter run --sink stdout` or `svdo-meter run --emit ndjson` is used.
 

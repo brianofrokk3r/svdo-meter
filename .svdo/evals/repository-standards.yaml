@@ -7,13 +7,18 @@ checks:
     command: test -f AGENTS.md
     required: true
     weight: 0.25
-  - id: repository-alignment-standard
+  - id: active-rust-quality-standard
     type: command
-    command: test -f .svdo/standards/repository-alignment.md
+    command: test -f .svdo/standards/1-rust-quality/SKILL.md
+    required: true
+    weight: 0.25
+  - id: active-rust-architecture-standard
+    type: command
+    command: test -f .svdo/standards/2-rust-architecture/SKILL.md
     required: true
     weight: 0.25
   - id: alignment-standard
     type: judge
-    standard: repository-alignment
-    weight: 0.5
+    standard: 2-rust-architecture/SKILL.md
+    weight: 0.25
 threshold: 0.5

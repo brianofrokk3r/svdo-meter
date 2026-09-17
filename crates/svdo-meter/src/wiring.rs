@@ -2,6 +2,7 @@ use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use anyhow::{Context, bail};
 use meter_adapters::{ClaudeAdapter, CodexAdapter, JsonlEventStore, OpenCodeAdapter};
 use meter_core::{HarnessConfig, HarnessKind};
 use meter_engine::{NdjsonWriteSink, RunEngine};
@@ -33,36 +34,60 @@ impl RunSinkSelection {
 
 pub fn engine(
     workspace: &Option<PathBuf>,
+    output_dir: &Option<PathBuf>,
     harness: HarnessKind,
     config: &HarnessConfig,
     sinks: RunSinkSelection,
-) -> RunEngine {
+) -> anyhow::Result<RunEngine> {
     let base = workspace.as_deref().unwrap_or_else(|| Path::new("."));
-    let store = Arc::new(JsonlEventStore::default_under(base));
+    let telemetry_path = output_dir
+        .clone()
+        .unwrap_or_else(|| JsonlEventStore::default_under(base).path().to_path_buf());
+    prepare_meter_output_dir(&telemetry_path)?;
+    let store = Arc::new(JsonlEventStore::new(telemetry_path));
     let mut engine = RunEngine::new(store);
     if sinks.stdout_ndjson {
         engine = engine.with_event_sink(Arc::new(NdjsonWriteSink::new(tokio::io::stdout())));
     }
     match (harness, config) {
         (HarnessKind::Codex, HarnessConfig::Codex(config)) => {
-            engine.with_adapter(Arc::new(CodexAdapter::new(config.clone())))
+            Ok(engine.with_adapter(Arc::new(CodexAdapter::new(config.clone()))))
         }
         (HarnessKind::Claude, HarnessConfig::Claude(config)) => {
-            engine.with_adapter(Arc::new(ClaudeAdapter::new(config.binary.clone())))
+            Ok(engine.with_adapter(Arc::new(ClaudeAdapter::new(config.binary.clone()))))
         }
         (HarnessKind::OpenCode, HarnessConfig::OpenCode(config)) => {
-            engine.with_adapter(Arc::new(OpenCodeAdapter::new(config.clone())))
+            Ok(engine.with_adapter(Arc::new(OpenCodeAdapter::new(config.clone()))))
         }
-        (HarnessKind::Gemini, _) => engine,
-        (HarnessKind::Codex, _) => engine,
-        (HarnessKind::Claude, _) => engine,
-        (HarnessKind::OpenCode, _) => engine,
+        (HarnessKind::Gemini, _) => Ok(engine),
+        (HarnessKind::Codex, _) => Ok(engine),
+        (HarnessKind::Claude, _) => Ok(engine),
+        (HarnessKind::OpenCode, _) => Ok(engine),
     }
 }
 
 pub fn default_telemetry_path(workspace: &Option<PathBuf>) -> PathBuf {
     let base = workspace.as_deref().unwrap_or_else(|| Path::new("."));
     JsonlEventStore::default_under(base).path().to_path_buf()
+}
+
+fn prepare_meter_output_dir(path: &Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(path).with_context(|| {
+        format!(
+            "failed to create meter output directory `{}`",
+            path.display()
+        )
+    })?;
+    let metadata = std::fs::metadata(path).with_context(|| {
+        format!(
+            "failed to inspect meter output directory `{}`",
+            path.display()
+        )
+    })?;
+    if !metadata.is_dir() {
+        bail!("meter output path `{}` is not a directory", path.display());
+    }
+    Ok(())
 }
 
 pub fn load_report(path: &Path, query: &ReportQuery) -> Result<TraceReport, std::io::Error> {
@@ -468,13 +493,15 @@ mod tests {
         let workspace = Some(unique_temp_path("workspace"));
         let engine = engine(
             &workspace,
+            &None,
             HarnessKind::Gemini,
             &HarnessConfig::Gemini(GeminiConfig { model: None }),
             RunSinkSelection {
                 jsonl: true,
                 stdout_ndjson: false,
             },
-        );
+        )
+        .unwrap_or_else(|error| panic!("{error:#}"));
 
         let error = engine
             .run(RunRequest {
@@ -512,6 +539,7 @@ mod tests {
             label: None,
             harness: HarnessKind::Codex,
             workspace: None,
+            output_dir: None,
             session: None,
             model: None,
             dangerous_bypass: false,

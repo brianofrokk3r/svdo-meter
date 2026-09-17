@@ -14,6 +14,6 @@ checks:
     weight: 0.4
   - id: cli-design
     type: judge
-    standard: cli-design
+    standard: 1-rust-quality/SKILL.md
     weight: 0.2
 threshold: 0.8
