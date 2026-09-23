@@ -18,3 +18,4 @@ docs/internal/*
 examples/**/study-output/*
 .env
 __pycache__
+examples/typesafe-judge/experiment-output
