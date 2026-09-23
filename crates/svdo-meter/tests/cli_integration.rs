@@ -139,7 +139,10 @@ fn compare_command_accepts_work_and_repeated_filters() -> std::io::Result<()> {
     let workspace = unique_temp_path("svdo-meter-compare-integration");
     let telemetry_dir = workspace.join(".svdo").join("meter");
     fs::create_dir_all(&telemetry_dir)?;
-    fs::write(telemetry_dir.join("runs.jsonl"), COMPARISON_FIXTURE)?;
+    fs::write(
+        telemetry_dir.join("runs.jsonl"),
+        fixture_with_recent_timestamps(COMPARISON_FIXTURE),
+    )?;
 
     let output = run_svdo_meter(&[
         "compare",
@@ -245,7 +248,10 @@ fn compare_command_renders_ticket_fixture_with_unavailable_and_zero_metrics() ->
 fn compare_command_renders_aggregate_fixture_with_repeated_harnesses_and_since()
 -> std::io::Result<()> {
     let workspace = unique_temp_path("svdo-meter-compare-aggregate-fixture");
-    write_workspace_telemetry_streams(&workspace, COMPARE_AGGREGATE_FIXTURE)?;
+    write_workspace_telemetry_streams(
+        &workspace,
+        &fixture_with_recent_timestamps(COMPARE_AGGREGATE_FIXTURE),
+    )?;
 
     let output = run_svdo_meter(&[
         "compare",
@@ -336,7 +342,10 @@ fn compare_command_supports_model_filter_across_repeated_harnesses() -> std::io:
 #[test]
 fn compare_command_enriches_aggregate_metrics_from_eval_and_run_artifacts() -> std::io::Result<()> {
     let workspace = unique_temp_path("svdo-meter-compare-artifact-enrichment");
-    write_workspace_telemetry_streams(&workspace, COMPARE_AGGREGATE_FIXTURE)?;
+    write_workspace_telemetry_streams(
+        &workspace,
+        &fixture_with_recent_timestamps(COMPARE_AGGREGATE_FIXTURE),
+    )?;
     write_compare_artifact(
         &workspace,
         "evals/recent-results.json",
@@ -1597,6 +1606,47 @@ fn write_workspace_telemetry_streams(workspace: &Path, contents: &str) -> std::i
         )?;
     }
     Ok(())
+}
+
+fn fixture_with_recent_timestamps(contents: &str) -> String {
+    let newest_timestamp = contents
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter_map(|event| {
+            event
+                .get("occurred_at")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|timestamp| chrono::DateTime::parse_from_rfc3339(timestamp).ok())
+                .map(|timestamp| timestamp.with_timezone(&chrono::Utc))
+        })
+        .max();
+    let Some(newest_timestamp) = newest_timestamp else {
+        return contents.to_owned();
+    };
+    let offset = chrono::Utc::now() - chrono::Duration::days(1) - newest_timestamp;
+
+    contents
+        .lines()
+        .map(|line| {
+            let Ok(mut event) = serde_json::from_str::<serde_json::Value>(line) else {
+                return line.to_owned();
+            };
+            for field in ["occurred_at", "observed_at"] {
+                let Some(timestamp) = event.get(field).and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
+                let Ok(timestamp) = chrono::DateTime::parse_from_rfc3339(timestamp) else {
+                    continue;
+                };
+                event[field] = serde_json::Value::String(
+                    (timestamp.with_timezone(&chrono::Utc) + offset)
+                        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+                );
+            }
+            serde_json::to_string(&event).unwrap_or_else(|_| line.to_owned())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn read_telemetry_streams(meter_dir: &Path) -> std::io::Result<String> {
