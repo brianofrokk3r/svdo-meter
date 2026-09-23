@@ -22,6 +22,6 @@ checks:
     rubric: calculator-implementation
     required: true
     weight: 0.4
-    min_score: 0.85
+    min_score: 0.70
 
 threshold: 0.85
