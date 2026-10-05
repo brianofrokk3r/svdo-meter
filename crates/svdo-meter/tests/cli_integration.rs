@@ -30,6 +30,18 @@ const TODO_CLI_STOPWORD_HEAVY_PROMPT: &str =
     include_str!("../../../examples/todo-cli/prompts/stopword-heavy-guided.md");
 const TODO_CLI_POLITE_PROMPT: &str =
     include_str!("../../../examples/todo-cli/prompts/polite-redundant-stopword.md");
+const ASD_COMPARISON_MATRIX: &str =
+    include_str!("../../../examples/asd-ste100-comparison/comparison-matrix.yaml");
+const ASD_COMPARISON_VARIANTS: &str =
+    include_str!("../../../examples/asd-ste100-comparison/prompts/variants.yaml");
+const ASD_STANDARD_PROMPT: &str =
+    include_str!("../../../examples/asd-ste100-comparison/prompts/standard.md");
+const ASD_CONTROLLED_PROMPT: &str =
+    include_str!("../../../examples/asd-ste100-comparison/prompts/asd-ste100.md");
+const ASD_COMPARISON_RUNNER: &str =
+    include_str!("../../../examples/asd-ste100-comparison/run-comparison.sh");
+const ASD_COMPARISON_REPORTER: &str =
+    include_str!("../../../examples/asd-ste100-comparison/report-comparison.sh");
 const TODO_CLI_REFERENCE_IMPLEMENTATION: &str = r#"#!/usr/bin/env python3
 import json
 import sys
@@ -1023,6 +1035,63 @@ fn todo_cli_stopword_runner_uses_svdo_meter_workflow_and_overrides() {
 }
 
 #[test]
+fn asd_comparison_documents_equivalent_runnable_variants() {
+    assert!(ASD_COMPARISON_MATRIX.contains("default_harness: codex"));
+    assert!(ASD_COMPARISON_MATRIX.contains("default_repetitions_per_variant: 10"));
+    assert!(ASD_COMPARISON_MATRIX.contains("input_tokens"));
+    assert!(ASD_COMPARISON_MATRIX.contains("reasoning_tokens"));
+    assert!(ASD_COMPARISON_MATRIX.contains("tool_calls"));
+    assert!(ASD_COMPARISON_MATRIX.contains("eval_score"));
+    assert!(ASD_COMPARISON_VARIANTS.contains("id: standard"));
+    assert!(ASD_COMPARISON_VARIANTS.contains("id: asd-ste100"));
+
+    let requirement_ids = (1..=15)
+        .map(|number| format!("**R{number:02} —"))
+        .collect::<Vec<_>>();
+    for requirement_id in requirement_ids {
+        assert_eq!(
+            ASD_STANDARD_PROMPT.matches(&requirement_id).count(),
+            1,
+            "standard prompt must contain {requirement_id} exactly once"
+        );
+        assert_eq!(
+            ASD_CONTROLLED_PROMPT.matches(&requirement_id).count(),
+            1,
+            "controlled prompt must contain {requirement_id} exactly once"
+        );
+    }
+
+    for shared_term in [
+        "--due-before",
+        "--label",
+        "report labels",
+        "logical AND",
+        "(unlabeled)",
+        "test_todo.py",
+    ] {
+        assert!(ASD_STANDARD_PROMPT.contains(shared_term));
+        assert!(ASD_CONTROLLED_PROMPT.contains(shared_term));
+    }
+}
+
+#[test]
+fn asd_comparison_runner_uses_shared_measurement_workflow() {
+    assert!(ASD_COMPARISON_RUNNER.starts_with("#!/usr/bin/env bash"));
+    assert!(ASD_COMPARISON_RUNNER.contains("SVDO_ASD_REPETITIONS:-10"));
+    assert!(ASD_COMPARISON_RUNNER.contains("SVDO_ASD_VARIANTS:-standard asd-ste100"));
+    assert!(ASD_COMPARISON_RUNNER.contains("SVDO_ASD_DRY_RUN"));
+    assert!(ASD_COMPARISON_RUNNER.contains("eval run expanded-todo-cli"));
+    assert!(ASD_COMPARISON_RUNNER.contains("--prompt-file"));
+    assert!(ASD_COMPARISON_RUNNER.contains("report --workspace"));
+    assert!(ASD_COMPARISON_RUNNER.contains("compare --workspace"));
+    assert!(ASD_COMPARISON_RUNNER.contains("report-comparison.sh"));
+    assert!(ASD_COMPARISON_REPORTER.contains("Quality and repository alignment"));
+    assert!(ASD_COMPARISON_REPORTER.contains("Token and context usage"));
+    assert!(ASD_COMPARISON_REPORTER.contains("Observed token sum"));
+    assert!(ASD_COMPARISON_REPORTER.contains("local observations"));
+}
+
+#[test]
 fn invalid_run_arguments_fail_before_harness_execution() {
     let output = run_svdo_meter(&["run", "--ticket", "ENG-142", "--harness", "codex"]);
 
@@ -1429,6 +1498,60 @@ fn todo_cli_stopword_reporter_groups_variants_and_eval_artifacts() -> std::io::R
     assert_stdout_contains(&output, "Judge");
     assert_stdout_contains(&output, "Comparisons vs baseline");
     assert_stdout_contains(&output, "significant by heuristic");
+
+    fs::remove_dir_all(workspace)?;
+    Ok(())
+}
+
+#[test]
+fn asd_comparison_reporter_combines_quality_context_and_execution() -> std::io::Result<()> {
+    let workspace = unique_temp_path("svdo-meter-asd-comparison-reporter");
+    write_workspace_telemetry_streams(
+        &workspace,
+        r#"
+{"schema_version":1,"event_id":"018f6f1b-97f1-7c04-9a96-500000000001","event_type":"run.completed","occurred_at":"2026-10-05T12:00:00Z","observed_at":"2026-10-05T12:00:00Z","run_id":"018f6f1b-97f1-7c04-9a96-500000000101","ticket_id":"ASD-REPORT-standard-001","label":"standard-001","harness":"codex","payload":{"type":"run_completed","data":{"metrics":{"wall_time_ms":1000,"active_time_ms":900,"command_time_ms":100,"tool_time_ms":200,"turn_count":2,"provider_event_count":6,"commands_executed":4,"failed_commands":0,"files_changed":2,"tool_calls":5,"errors":0,"token_usage":{"input_tokens":100,"cached_input_tokens":20,"cache_write_tokens":5,"output_tokens":40,"reasoning_tokens":10}},"exit_code":0}}}
+{"schema_version":1,"event_id":"018f6f1b-97f1-7c04-9a96-500000000002","event_type":"run.failed","occurred_at":"2026-10-05T12:01:00Z","observed_at":"2026-10-05T12:01:00Z","run_id":"018f6f1b-97f1-7c04-9a96-500000000102","ticket_id":"ASD-REPORT-asd-ste100-001","label":"asd-ste100-001","harness":"codex","payload":{"type":"run_failed","data":{"metrics":{"wall_time_ms":800,"active_time_ms":700,"command_time_ms":80,"tool_time_ms":150,"turn_count":2,"provider_event_count":5,"commands_executed":3,"failed_commands":1,"files_changed":1,"tool_calls":4,"errors":1,"token_usage":{"input_tokens":80,"output_tokens":35}},"reason":"fixture failure","exit_code":1}}}
+"#,
+    )?;
+    write_compare_artifact(
+        &workspace,
+        "evals/standard-001-eval.json",
+        r#"{"results":[{"overall_score":1.0,"checks":[{"type":"command","outcome":"passed","required":true,"violations":[]},{"type":"judge","outcome":"passed","required":false,"score":0.9,"violations":[]}],"violations":[]}]}"#,
+    )?;
+    write_compare_artifact(
+        &workspace,
+        "evals/asd-ste100-001-eval.json",
+        r#"{"results":[{"overall_score":0.7,"checks":[{"type":"command","outcome":"failed","required":true,"violations":["missing behavior"]},{"type":"judge","outcome":"passed","required":false,"score":0.8,"violations":[]}],"violations":[]}]}"#,
+    )?;
+
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
+    let reporter = repo_root
+        .join("examples")
+        .join("asd-ste100-comparison")
+        .join("report-comparison.sh");
+    let output = Command::new(reporter)
+        .args([
+            "ASD-REPORT",
+            "--workspace",
+            path_str(&workspace)?,
+            "--baseline",
+            "standard",
+        ])
+        .output()?;
+
+    assert_output_success(&output);
+    assert_stdout_contains(&output, "SVDO ASD-STE100-Style Prompt Comparison");
+    assert_stdout_contains(&output, "Quality and repository alignment");
+    assert_stdout_contains(&output, "Execution behavior");
+    assert_stdout_contains(&output, "Token and context usage");
+    assert_stdout_contains(&output, "standard");
+    assert_stdout_contains(&output, "asd-ste100");
+    assert_stdout_contains(&output, "100.0 (n=1)");
+    assert_stdout_contains(&output, "Observed mean differences vs standard");
+    assert_stdout_contains(
+        &output,
+        "not evidence that one writing style is generally superior",
+    );
 
     fs::remove_dir_all(workspace)?;
     Ok(())

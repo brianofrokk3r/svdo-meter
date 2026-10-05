@@ -1,0 +1,54 @@
+id: expanded-todo-cli
+task: |
+  Implement the expanded todo.py CLI described in TASK.md. The same evaluation
+  applies to the standard and ASD-STE100-style prompt variants.
+threshold: 0.9
+
+checks:
+  - id: core-commands-persist-with-stable-ids
+    type: command
+    command: tmpdir=$(mktemp -d) && cp todo.py "$tmpdir/todo.py" && cd "$tmpdir" && python todo.py add "First" > add.out && grep -Fx "Added 1: First" add.out && python todo.py add "Second" >/dev/null && python todo.py complete 1 > complete.out && grep -Fx "Completed 1: First" complete.out && python todo.py delete 1 > delete.out && grep -Fx "Deleted 1: First" delete.out && python todo.py list > list.out && test "$(cat list.out)" = "2. [ ] Second" && test -f .todo.json
+    required: true
+    weight: 0.14
+
+  - id: due-dates-and-labels-normalize-and-display
+    type: command
+    command: tmpdir=$(mktemp -d) && cp todo.py "$tmpdir/todo.py" && cd "$tmpdir" && python todo.py add "Ship release" --due 2026-10-15 --label Urgent --label work --label urgent >/dev/null && python todo.py list > list.out && test "$(cat list.out)" = "1. [ ] Ship release | due: 2026-10-15 | labels: urgent,work" && grep -q '2026-10-15' .todo.json && grep -q 'urgent' .todo.json
+    required: true
+    weight: 0.14
+
+  - id: filters-use-and-semantics
+    type: command
+    command: tmpdir=$(mktemp -d) && cp todo.py "$tmpdir/todo.py" && cd "$tmpdir" && python todo.py add "A" --due 2026-10-10 --label Work >/dev/null && python todo.py add "B" --due 2026-10-15 --label work >/dev/null && python todo.py add "C" --due 2026-10-10 --label home >/dev/null && python todo.py complete 2 >/dev/null && python todo.py list --status open --due 2026-10-10 --due-before 2026-10-10 --label WORK > filtered.out && test "$(cat filtered.out)" = "1. [ ] A | due: 2026-10-10 | labels: work" && python todo.py list --status completed --label work > completed.out && test "$(cat completed.out)" = "2. [x] B | due: 2026-10-15 | labels: work"
+    required: true
+    weight: 0.14
+
+  - id: grouped-label-report-counts-each-group
+    type: command
+    command: tmpdir=$(mktemp -d) && cp todo.py "$tmpdir/todo.py" && cd "$tmpdir" && python todo.py add "A" --label Work --label urgent >/dev/null && python todo.py add "B" --label work >/dev/null && python todo.py add "C" >/dev/null && python todo.py complete 2 >/dev/null && python todo.py report labels > report.out && printf 'urgent: total=1 open=1 completed=0\nwork: total=2 open=1 completed=1\n(unlabeled): total=1 open=1 completed=0\n' > expected.out && cmp expected.out report.out && python todo.py report labels --status completed --label WORK > filtered.out && test "$(cat filtered.out)" = "work: total=1 open=0 completed=1"
+    required: true
+    weight: 0.14
+
+  - id: invalid-input-preserves-state
+    type: command
+    command: tmpdir=$(mktemp -d) && cp todo.py "$tmpdir/todo.py" && cd "$tmpdir" && python todo.py add "Safe" >/dev/null && cp .todo.json before.json && ! python todo.py add "Bad date" --due 2026-02-30 >out 2>err && test -s err && cmp before.json .todo.json && ! python todo.py add "Bad label" --label 'not valid' >out 2>err && test -s err && cmp before.json .todo.json && ! python todo.py complete 99 >out 2>err && test -s err && cmp before.json .todo.json && ! python todo.py unknown >out 2>err && test -s err && cmp before.json .todo.json
+    required: true
+    weight: 0.14
+
+  - id: malformed-storage-and-legacy-records
+    type: command
+    command: tmpdir=$(mktemp -d) && cp todo.py "$tmpdir/todo.py" && cd "$tmpdir" && printf '{bad json\n' > .todo.json && cp .todo.json before.json && ! python todo.py list >out 2>err && test -s err && cmp before.json .todo.json && printf '[{"id":1,"text":"Legacy","completed":false}]\n' > .todo.json && python todo.py list > legacy.out && test "$(cat legacy.out)" = "1. [ ] Legacy"
+    required: true
+    weight: 0.1
+
+  - id: standard-library-tests-run
+    type: command
+    command: test -f todo.py && test -f test_todo.py && python -m unittest -v
+    required: true
+    weight: 0.1
+
+  - id: repository-alignment
+    type: judge
+    standard: expanded-todo-cli-quality
+    weight: 0.1
+

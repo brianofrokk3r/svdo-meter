@@ -1,0 +1,105 @@
+study: asd-ste100-prompt-comparison
+fixture: expanded-todo-cli
+default_ticket: ASD-STE100-TODO
+default_harness: codex
+default_model: gpt-5.5
+default_repetitions_per_variant: 10
+label_template: "{variant_id}-{repetition:03d}"
+ticket_template: "{work_id}-{label}"
+
+hypothesis: >
+  Controlled technical language can change implementation correctness, repository
+  alignment, context usage, and execution behavior. The direction and size of any
+  difference must be established from the recorded runs rather than assumed.
+
+controlled_variables:
+  - expanded todo CLI requirement inventory
+  - base workspace contents
+  - acceptance evaluation
+  - harness and model
+  - run and judge configuration
+  - repetition count
+
+independent_variable: prompt language style
+
+metric_focus:
+  quality:
+    - completion_status
+    - eval_score
+    - required_checks
+    - judge_score
+    - violations
+  context:
+    - input_tokens
+    - cached_input_tokens
+    - cache_write_tokens
+    - output_tokens
+    - reasoning_tokens
+  execution:
+    - wall_time_ms
+    - commands_executed
+    - failed_commands
+    - tool_calls
+    - files_changed
+    - errors
+
+artifact_expectations:
+  persistent_output: study-output/<work-id>/
+  run_log: study-output/<work-id>/run.log
+  aggregate_workspace: <workspace>/
+  per_run_workspaces: <workspace>/runs/<label>.<suffix>/
+  telemetry: <workspace>/.svdo/meter/*.jsonl
+  eval_results: <workspace>/.svdo/evals/<label>-eval.json
+  saved_reports:
+    - study-output/<work-id>/svdo-report.txt
+    - study-output/<work-id>/svdo-compare.txt
+    - study-output/<work-id>/comparison-summary.txt
+    - study-output/<work-id>/study-info.txt
+
+successful_smoke_test:
+  runner_exit_status: 0
+  required_terminal_events:
+    - label: standard-001
+      event_type: run.completed
+    - label: asd-ste100-001
+      event_type: run.completed
+  required_generated_files_per_attempt:
+    - todo.py
+    - test_todo.py
+  required_eval_result: all required checks pass for both variants
+  required_report_sections:
+    - correctness and completion
+    - token and context usage
+    - execution behavior
+    - repository alignment
+  note: >
+    Durable run.failed events verify failure recording but do not make the
+    implementation comparison successful.
+
+override_environment:
+  SVDO_ASD_WORK: Override the ticket/work id.
+  SVDO_ASD_WORKSPACE: Reuse a specific empty or study workspace.
+  SVDO_ASD_HARNESS: Override the harness.
+  SVDO_ASD_MODEL: Override the harness-specific model identifier.
+  SVDO_ASD_REPETITIONS: Override repetitions per variant.
+  SVDO_ASD_VARIANTS: Space-separated variant ids to include.
+  SVDO_ASD_OUTPUT_ROOT: Override the persistent output root.
+  SVDO_ASD_OUTPUT_DIR: Override the exact persistent output directory.
+  SVDO_ASD_DRY_RUN: Set to 1 to print commands without agent execution.
+  SVDO_ASD_RUN_EVALS: Set to 0 to skip per-run evals.
+  SVDO_ASD_JUDGE: Set to 0 to skip judge checks.
+  SVDO_ASD_DANGEROUS_BYPASS: Set to 1 to pass --dangerous-bypass.
+  SVDO_METER_BIN: Override the svdo-meter executable path.
+
+cost_time_guidance:
+  smoke_test_repetitions: 1
+  recommended_repetitions_per_variant: 10
+  default_total_runs: 20
+  note: >
+    Start with one repetition. Larger samples consume provider time and budget.
+
+variants:
+  - id: standard
+    prompt_file: prompts/standard.md
+  - id: asd-ste100
+    prompt_file: prompts/asd-ste100.md

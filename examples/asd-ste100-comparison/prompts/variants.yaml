@@ -1,0 +1,34 @@
+study: asd-ste100-prompt-comparison
+fixture: expanded-todo-cli
+shared_requirements:
+  - R01
+  - R02
+  - R03
+  - R04
+  - R05
+  - R06
+  - R07
+  - R08
+  - R09
+  - R10
+  - R11
+  - R12
+  - R13
+  - R14
+  - R15
+notes:
+  - Both variants request the same objective, behavior, constraints, and deliverables.
+  - Requirement identifiers make semantic correspondence reviewable.
+  - The controlled variant is ASD-STE100-style; this example does not claim formal conformance.
+variants:
+  - id: standard
+    name: Standard technical prompt
+    prompt_file: prompts/standard.md
+    language_style: ordinary technical prose
+    requirements: [R01, R02, R03, R04, R05, R06, R07, R08, R09, R10, R11, R12, R13, R14, R15]
+  - id: asd-ste100
+    name: ASD-STE100-style prompt
+    prompt_file: prompts/asd-ste100.md
+    language_style: controlled technical English
+    requirements: [R01, R02, R03, R04, R05, R06, R07, R08, R09, R10, R11, R12, R13, R14, R15]
+

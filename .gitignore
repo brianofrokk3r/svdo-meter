@@ -1,7 +1,8 @@
 .joule
 .agents
 .codex
-.svdo
+.svdo/*
+!.svdo/standards.md
 !.svdo/standards/
 !.svdo/standards/**
 !.svdo/evals/
