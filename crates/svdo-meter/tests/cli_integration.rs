@@ -38,6 +38,8 @@ const ASD_STANDARD_PROMPT: &str =
     include_str!("../../../examples/asd-ste100-comparison/prompts/standard.md");
 const ASD_CONTROLLED_PROMPT: &str =
     include_str!("../../../examples/asd-ste100-comparison/prompts/asd-ste100.md");
+const ASD_LEGACY_FIXTURE: &str =
+    include_str!("../../../examples/asd-ste100-comparison/.svdo/fixtures/basic-todo.json");
 const ASD_COMPARISON_RUNNER: &str =
     include_str!("../../../examples/asd-ste100-comparison/run-comparison.sh");
 const ASD_COMPARISON_REPORTER: &str =
@@ -1044,6 +1046,10 @@ fn asd_comparison_documents_equivalent_runnable_variants() {
     assert!(ASD_COMPARISON_MATRIX.contains("eval_score"));
     assert!(ASD_COMPARISON_VARIANTS.contains("id: standard"));
     assert!(ASD_COMPARISON_VARIANTS.contains("id: asd-ste100"));
+    assert_eq!(
+        ASD_LEGACY_FIXTURE.trim(),
+        r#"[{"id":1,"text":"Legacy","completed":false}]"#
+    );
 
     let requirement_ids = (1..=15)
         .map(|number| format!("**R{number:02} —"))
@@ -1068,6 +1074,8 @@ fn asd_comparison_documents_equivalent_runnable_variants() {
         "logical AND",
         "(unlabeled)",
         "test_todo.py",
+        ".svdo/fixtures/basic-todo.json",
+        "top-level JSON array",
     ] {
         assert!(ASD_STANDARD_PROMPT.contains(shared_term));
         assert!(ASD_CONTROLLED_PROMPT.contains(shared_term));
@@ -1080,12 +1088,23 @@ fn asd_comparison_runner_uses_shared_measurement_workflow() {
     assert!(ASD_COMPARISON_RUNNER.contains("SVDO_ASD_REPETITIONS:-10"));
     assert!(ASD_COMPARISON_RUNNER.contains("SVDO_ASD_VARIANTS:-standard asd-ste100"));
     assert!(ASD_COMPARISON_RUNNER.contains("SVDO_ASD_DRY_RUN"));
+    assert!(ASD_COMPARISON_RUNNER.contains("SVDO_ASD_JUDGE_MODEL"));
+    assert!(ASD_COMPARISON_RUNNER.contains("balanced interleaved rotation"));
+    assert!(ASD_COMPARISON_RUNNER.contains("schedule+=("));
+    assert!(ASD_COMPARISON_RUNNER.contains(".svdo/fixtures/basic-todo.json"));
     assert!(ASD_COMPARISON_RUNNER.contains("eval run expanded-todo-cli"));
     assert!(ASD_COMPARISON_RUNNER.contains("--prompt-file"));
+    assert!(
+        ASD_COMPARISON_RUNNER.contains("run_args+=(--codex-sandbox workspace-write)"),
+        "Codex attempts must be able to create files in their isolated workspace"
+    );
     assert!(ASD_COMPARISON_RUNNER.contains("report --workspace"));
     assert!(ASD_COMPARISON_RUNNER.contains("compare --workspace"));
     assert!(ASD_COMPARISON_RUNNER.contains("report-comparison.sh"));
     assert!(ASD_COMPARISON_REPORTER.contains("Quality and repository alignment"));
+    assert!(ASD_COMPARISON_REPORTER.contains("Required check failures"));
+    assert!(ASD_COMPARISON_REPORTER.contains("95% Wilson intervals"));
+    assert!(ASD_COMPARISON_REPORTER.contains("result-level copies"));
     assert!(ASD_COMPARISON_REPORTER.contains("Token and context usage"));
     assert!(ASD_COMPARISON_REPORTER.contains("Observed token sum"));
     assert!(ASD_COMPARISON_REPORTER.contains("local observations"));
@@ -1516,12 +1535,12 @@ fn asd_comparison_reporter_combines_quality_context_and_execution() -> std::io::
     write_compare_artifact(
         &workspace,
         "evals/standard-001-eval.json",
-        r#"{"results":[{"overall_score":1.0,"checks":[{"type":"command","outcome":"passed","required":true,"violations":[]},{"type":"judge","outcome":"passed","required":false,"score":0.9,"violations":[]}],"violations":[]}]}"#,
+        r#"{"results":[{"overall_score":1.0,"threshold":0.9,"checks":[{"id":"legacy-storage","type":"command","outcome":"passed","required":true,"violations":[]},{"id":"repository-alignment","type":"judge","outcome":"passed","required":false,"score":0.9,"violations":[]}],"violations":[]}]}"#,
     )?;
     write_compare_artifact(
         &workspace,
         "evals/asd-ste100-001-eval.json",
-        r#"{"results":[{"overall_score":0.7,"checks":[{"type":"command","outcome":"failed","required":true,"violations":["missing behavior"]},{"type":"judge","outcome":"passed","required":false,"score":0.8,"violations":[]}],"violations":[]}]}"#,
+        r#"{"results":[{"overall_score":0.7,"threshold":0.9,"checks":[{"id":"legacy-storage","type":"command","outcome":"failed","required":true,"violations":["missing behavior"]},{"id":"repository-alignment","type":"judge","outcome":"passed","required":false,"score":0.8,"violations":[]}],"violations":["legacy-storage: missing behavior","overall score below threshold"]}]}"#,
     )?;
 
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
@@ -1544,6 +1563,10 @@ fn asd_comparison_reporter_combines_quality_context_and_execution() -> std::io::
     assert_stdout_contains(&output, "Quality and repository alignment");
     assert_stdout_contains(&output, "Execution behavior");
     assert_stdout_contains(&output, "Token and context usage");
+    assert_stdout_contains(&output, "All required runs");
+    assert_stdout_contains(&output, "Required check failures");
+    assert_stdout_contains(&output, "legacy-storage");
+    assert_stdout_contains(&output, "Findings count check-level violation entries once");
     assert_stdout_contains(&output, "standard");
     assert_stdout_contains(&output, "asd-ste100");
     assert_stdout_contains(&output, "100.0 (n=1)");

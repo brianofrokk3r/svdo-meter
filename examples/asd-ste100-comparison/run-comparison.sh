@@ -15,6 +15,7 @@ COMPARE_OUTPUT="$OUTPUT_DIR/svdo-compare.txt"
 SUMMARY_OUTPUT="$OUTPUT_DIR/comparison-summary.txt"
 HARNESS="${SVDO_ASD_HARNESS:-codex}"
 MODEL="${SVDO_ASD_MODEL:-gpt-5.5}"
+JUDGE_MODEL="${SVDO_ASD_JUDGE_MODEL:-$MODEL}"
 REPETITIONS="${SVDO_ASD_REPETITIONS:-10}"
 VARIANTS="${SVDO_ASD_VARIANTS:-standard asd-ste100}"
 DRY_RUN="${SVDO_ASD_DRY_RUN:-0}"
@@ -94,6 +95,45 @@ fi
 
 validate_positive_integer "$REPETITIONS" "SVDO_ASD_REPETITIONS"
 
+read -r -a variant_list <<<"$VARIANTS"
+if [[ "${#variant_list[@]}" -eq 0 ]]; then
+  printf 'SVDO_ASD_VARIANTS must select at least one variant.\n' >&2
+  exit 2
+fi
+
+for variant in "${variant_list[@]}"; do
+  prompt_file="$(prompt_for_variant "$variant")" || {
+    printf 'unknown variant id: %s\n' "$variant" >&2
+    exit 2
+  }
+  if [[ ! -f "$prompt_file" ]]; then
+    printf 'prompt file not found for %s: %s\n' "$variant" "$prompt_file" >&2
+    exit 1
+  fi
+done
+
+# Rotate which variant goes first in each repetition block. This keeps attempts
+# close in time without making the schedule irreproducibly random.
+schedule=()
+variant_count="${#variant_list[@]}"
+rep=1
+while [[ "$rep" -le "$REPETITIONS" ]]; do
+  offset=$(((rep - 1) % variant_count))
+  step=0
+  while [[ "$step" -lt "$variant_count" ]]; do
+    index=$(((offset + step) % variant_count))
+    schedule+=("${variant_list[index]}:$rep")
+    step=$((step + 1))
+  done
+  rep=$((rep + 1))
+done
+
+if [[ "$JUDGE_MODEL" == "$MODEL" ]]; then
+  judge_model_relation="same as implementation model"
+else
+  judge_model_relation="distinct from implementation model"
+fi
+
 if [[ "$DRY_RUN" != "1" && "$HARNESS" == "codex" ]]; then
   run_help="$("$SVDO_METER_BIN" run --help 2>/dev/null || true)"
   if [[ "$run_help" == *"--codex-skip-git-repo-check"* ]]; then
@@ -115,14 +155,18 @@ Compare:     $COMPARE_OUTPUT
 Summary:     $SUMMARY_OUTPUT
 Harness:     $HARNESS
 Model:       $MODEL
+Judge model: $JUDGE_MODEL
+Judge setup: $judge_model_relation
 Repetitions: $REPETITIONS per variant
 Variants:    $VARIANTS
+Order:       balanced interleaved rotation
 Ticket IDs:  $WORK-<label>
 EOF
 exec > >(tee -a "$RUN_LOG") 2>&1
 
-mkdir -p "$WORKSPACE/.svdo/evals" "$WORKSPACE/.svdo/meter" "$WORKSPACE/.svdo/standards" "$RUN_WORKSPACES_DIR"
+mkdir -p "$WORKSPACE/.svdo/evals" "$WORKSPACE/.svdo/fixtures" "$WORKSPACE/.svdo/meter" "$WORKSPACE/.svdo/standards" "$RUN_WORKSPACES_DIR"
 cp "$SCRIPT_DIR/.svdo/evals/expanded-todo-cli.yaml" "$WORKSPACE/.svdo/evals/"
+cp "$SCRIPT_DIR/.svdo/fixtures/basic-todo.json" "$WORKSPACE/.svdo/fixtures/"
 cp "$SCRIPT_DIR/.svdo/standards/expanded-todo-cli-quality.md" "$WORKSPACE/.svdo/standards/"
 
 cat <<EOF
@@ -132,8 +176,11 @@ Work:        $WORK
 Workspace:   $WORKSPACE
 Harness:     $HARNESS
 Model:       $MODEL
+Judge model: $JUDGE_MODEL
+Judge setup: $judge_model_relation
 Repetitions: $REPETITIONS per variant
 Variants:    $VARIANTS
+Order:       balanced interleaved rotation
 Dry run:     $DRY_RUN
 Ticket IDs:  $WORK-<label>
 
@@ -143,26 +190,18 @@ Aggregate evals:     $WORKSPACE/.svdo/evals/
 Persistent output:   $OUTPUT_DIR/
 EOF
 
-for variant in $VARIANTS; do
-  prompt_file="$(prompt_for_variant "$variant")" || {
-    printf 'unknown variant id: %s\n' "$variant" >&2
-    exit 2
-  }
-
-  if [[ ! -f "$prompt_file" ]]; then
-    printf 'prompt file not found for %s: %s\n' "$variant" "$prompt_file" >&2
-    exit 1
-  fi
-
-  rep=1
-  while [[ "$rep" -le "$REPETITIONS" ]]; do
+for scheduled_attempt in "${schedule[@]}"; do
+    variant="${scheduled_attempt%%:*}"
+    rep="${scheduled_attempt#*:}"
+    prompt_file="$(prompt_for_variant "$variant")"
     label="$(printf '%s-%03d' "$variant" "$rep")"
     run_ticket="$WORK-$label"
     run_workspace="$(mktemp -d "$RUN_WORKSPACES_DIR/$label.XXXXXX")" || exit 1
 
-    mkdir -p "$run_workspace/.svdo/evals" "$run_workspace/.svdo/standards" || exit 1
+    mkdir -p "$run_workspace/.svdo/evals" "$run_workspace/.svdo/fixtures" "$run_workspace/.svdo/standards" || exit 1
     cp "$prompt_file" "$run_workspace/TASK.md"
     cp "$SCRIPT_DIR/.svdo/evals/expanded-todo-cli.yaml" "$run_workspace/.svdo/evals/"
+    cp "$SCRIPT_DIR/.svdo/fixtures/basic-todo.json" "$run_workspace/.svdo/fixtures/"
     cp "$SCRIPT_DIR/.svdo/standards/expanded-todo-cli-quality.md" "$run_workspace/.svdo/standards/"
 
     note "run $label"
@@ -182,6 +221,10 @@ for variant in $VARIANTS; do
     fi
 
     if [[ "$HARNESS" == "codex" ]]; then
+      # Each attempt must create the implementation and tests in its fresh
+      # workspace. Make that permission explicit instead of inheriting a
+      # possibly read-only Codex default or user profile.
+      run_args+=(--codex-sandbox workspace-write)
       if [[ "$codex_skip_git_repo_check" == "1" ]]; then
         run_args+=(--codex-skip-git-repo-check)
       elif [[ "$DRY_RUN" != "1" && ! -d "$run_workspace/.git" ]] && command -v git >/dev/null 2>&1; then
@@ -210,7 +253,7 @@ for variant in $VARIANTS; do
       )
 
       if [[ "$RUN_JUDGE" == "1" ]]; then
-        eval_args+=(--harness "$HARNESS" --model "$MODEL")
+        eval_args+=(--harness "$HARNESS" --model "$JUDGE_MODEL")
       fi
 
       if [[ "$DRY_RUN" == "1" ]]; then
@@ -232,8 +275,6 @@ for variant in $VARIANTS; do
       fi
     fi
 
-    rep=$((rep + 1))
-  done
 done
 
 note "native report"

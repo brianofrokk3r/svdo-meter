@@ -17,11 +17,11 @@ Both prompts ask an agent to create a standard-library Python todo CLI. The task
 - logical AND for combined filters;
 - label-grouped counts for open and completed todos;
 - deterministic ordering and display;
-- compatibility with basic stored todo records;
+- compatibility with the explicitly supplied legacy root-array storage fixture;
 - failure atomicity for invalid commands and invalid stored data;
 - a standard-library automated test suite.
 
-See [standard.md](prompts/standard.md) and [asd-ste100.md](prompts/asd-ste100.md). The manifest in [variants.yaml](prompts/variants.yaml) gives both variants the same R01–R15 requirement inventory. The runner also supplies the same fixture, harness, model, repetition count, permissions, evaluation, and quality standard to both variants. Prompt language style is the intended independent variable.
+See [standard.md](prompts/standard.md) and [asd-ste100.md](prompts/asd-ste100.md). The manifest in [variants.yaml](prompts/variants.yaml) gives both variants the same R01–R15 requirement inventory. The runner also supplies the same fixture, harness, model, repetition count, permissions, evaluation, and quality standard to both variants. Prompt language style is the intended independent variable. Both prompts state the exact legacy root-array representation, and each attempt receives the same reference file at `.svdo/fixtures/basic-todo.json`.
 
 ## Controlled-language conventions
 
@@ -76,6 +76,11 @@ SVDO_ASD_REPETITIONS=1 \
 ./examples/asd-ste100-comparison/run-comparison.sh
 ```
 
+For Codex runs, the workflow explicitly selects the `workspace-write` sandbox
+because each attempt must create `todo.py` and `test_todo.py` in its isolated
+workspace. Approval and sandbox bypass remain disabled unless
+`SVDO_ASD_DANGEROUS_BYPASS=1` is set.
+
 The script continues through the matrix if an individual agent run or eval fails. It produces the available reports and returns a nonzero status at the end when any step failed.
 
 ### Successful smoke-test criteria
@@ -101,6 +106,18 @@ The default is 10 repetitions per variant (20 independent agent runs):
 
 Each attempt gets a unique ticket and a fresh child workspace. This prevents a provider session, generated implementation, or local state from carrying from one attempt to another. Run a one-repetition smoke test before committing to the default because a full study can consume substantial time and provider budget.
 
+Attempts use a balanced interleaved rotation. With the default two variants,
+the first repetition runs `standard` then `asd-ste100`, the second runs
+`asd-ste100` then `standard`, and subsequent repetitions continue that pattern.
+This keeps variants close in time and prevents one variant from always running
+first. The deterministic schedule is recorded in `study-info.txt`.
+
+The declared primary outcome is the proportion of attempts that pass every
+required deterministic check. The report presents its count, rate, and a
+descriptive 95% Wilson interval for each variant. Eval and judge scores,
+check-level findings, execution time, and provider token counters are secondary
+outcomes.
+
 Common overrides are:
 
 ```bash
@@ -108,6 +125,7 @@ SVDO_ASD_WORK=ASD-TODO-EXPERIMENT \
 SVDO_ASD_WORKSPACE=/tmp/asd-todo-study \
 SVDO_ASD_HARNESS=codex \
 SVDO_ASD_MODEL=gpt-5.5 \
+SVDO_ASD_JUDGE_MODEL=gpt-5.6-sol \
 SVDO_ASD_REPETITIONS=5 \
 ./examples/asd-ste100-comparison/run-comparison.sh
 ```
@@ -119,6 +137,7 @@ SVDO_ASD_REPETITIONS=5 \
 | `SVDO_ASD_WORKSPACE` | Set the aggregate workspace. |
 | `SVDO_ASD_HARNESS` | Select the harness. |
 | `SVDO_ASD_MODEL` | Select the harness-specific model. |
+| `SVDO_ASD_JUDGE_MODEL` | Select the judge model independently. It defaults to `SVDO_ASD_MODEL`; use a distinct model for a stronger acceptance study when available. |
 | `SVDO_ASD_REPETITIONS` | Set attempts per variant. |
 | `SVDO_ASD_VARIANTS` | Select a space-separated subset for diagnostics. Use both variants for a comparison. |
 | `SVDO_ASD_OUTPUT_ROOT` | Set the persistent result root. |
@@ -140,6 +159,7 @@ The workflow prints its temporary or configured aggregate workspace. It contains
 ├── .svdo/
 │   ├── meter/*.jsonl
 │   ├── evals/<variant>-<repetition>-eval.json
+│   ├── fixtures/basic-todo.json
 │   └── standards/expanded-todo-cli-quality.md
 └── runs/
     └── <variant>-<repetition>.<suffix>/
@@ -154,6 +174,124 @@ Viewable output is saved separately under `examples/asd-ste100-comparison/study-
 - `svdo-report.txt`: native aggregate SVDO report;
 - `svdo-compare.txt`: native SVDO comparison;
 - `comparison-summary.txt`: prompt-variant summary.
+
+For new studies, the summary counts only check-level findings, reports the
+number of attempts that passed every required check, supplies a descriptive
+95% Wilson interval for that per-run pass rate, and lists failed required checks
+by ID. It excludes duplicated result-level copies and score-threshold messages
+from the finding count. If all observed command, tool-call, and file-change
+counters are zero, the summary prints a telemetry warning.
+
+## Recorded experimental output: 2026-10-06
+
+This retained output predates the design corrections described above. It used
+grouped rather than interleaved execution, did not provide or explicitly define
+the legacy root-array fixture, used the implementation model as its judge, and
+reported duplicated violation entries. Keep it as historical evidence and do
+not combine it directly with results from the corrected protocol.
+
+The retained study
+[`ASD-STE100-TODO-20261006-094849`](study-output/ASD-STE100-TODO-20261006-094849/)
+used the Codex harness with `gpt-5.6-sol` and ran 30 attempts per variant. All
+60 agent runs emitted `run.completed`. The aggregate summary reported these
+results:
+
+| Metric | `standard` | `asd-ste100` | ASD-STE100-style difference |
+| --- | ---: | ---: | ---: |
+| Mean eval score | 0.96 | 0.90 | -0.06 |
+| Mean judge score | 0.98 | 0.96 | -0.02 |
+| Required checks passed | 198/210 (94.3%) | 181/210 (86.2%) | -17 checks (-8.1 percentage points) |
+| Reported violation entries | 49 | 121 | +72 (2.47 times the standard count) |
+| Mean wall time | 172,688.0 ms | 155,957.9 ms | -16,730.1 ms (-9.7%) |
+| Mean input tokens | 217,682.9 | 223,622.5 | +5,939.6 (+2.7%) |
+| Mean output tokens | 8,603.0 | 8,386.6 | -216.4 (-2.5%) |
+| Mean observed token-counter sum | 424,413.3 | 436,565.4 | +12,152.1 (+2.9%) |
+
+### What the violations imply
+
+**Primary finding: the ASD-STE100-style implementations failed the required
+legacy-storage check in 29/30 attempts, compared with 12/30 standard
+attempts.** This is a backward-compatibility failure, not merely a larger
+collection of minor style findings. All missed required checks came from the
+composite `malformed-storage-and-legacy-records` check:
+
+| Required check result | `standard` | `asd-ste100` |
+| --- | ---: | ---: |
+| Passed | 18/30 (60.0%) | 1/30 (3.3%) |
+| Failed at the legacy-state step | 12/30 (40.0%) | 29/30 (96.7%) |
+
+The failing implementations required `.todo.json` to contain a new root object
+with `next_id` and `todos`. They rejected the basic fixture's existing root JSON
+array. Consequently, an existing user could upgrade to one of these
+implementations and find that the CLI no longer opens their stored todos. The
+failure output shows that the implementations rejected the legacy schema; it
+does not indicate that they overwrote the old file.
+
+The repository-alignment judge found related and secondary problems. Counts in
+this table are the number of attempts in which the judge mentioned the category;
+one attempt can appear in more than one row.
+
+| Judge finding | `standard` | `asd-ste100` | Practical implication |
+| --- | ---: | ---: | --- |
+| Legacy root-array schema rejected | 1 | 7 | Confirms the backward-compatibility defect found more consistently by the command check. |
+| Tests used the new wrapper instead of the real legacy representation | 1 | 7 | The generated tests could pass while failing to protect the required upgrade path. |
+| Unsupported help, abbreviated, or repeated options accepted | 9 | 3 | Misspelled or undefined CLI input can be silently interpreted as a valid command. |
+| Invalid stored due dates or labels mishandled | 0 | 4 | Invalid state can be accepted, or can produce a traceback instead of a clear schema error. |
+| State-file symbolic link not guarded | 0 | 1 | The CLI can read state outside the current working directory through a symbolic link. |
+| Generated `__pycache__` artifact retained | 1 | 2 | The output contains an unrelated file; this is a scope and repository-hygiene issue rather than a behavior failure. |
+
+The raw totals of 49 and 121 are **reported violation entries**, not counts of
+independent defects or failed runs. The summary adds check-level violations,
+result-level copies of some of those violations, and an additional entry when
+an overall score is below its threshold. The totals therefore contain
+duplication. The 12/30 versus 29/30 required-check failure rate is the clearer
+and more consequential comparison.
+
+### Attribution caveat
+
+This result does not, by itself, identify a defect in ASD-STE100 or in the Codex
+CLI. Both prompt variants say that legacy todo objects can omit `due` and
+`labels`, but neither prompt states that the basic fixture stores those objects
+in a root JSON array. The evaluator requires that exact root-array format. The
+study therefore includes an unstated acceptance constraint, and the high
+failure rate partly exposes a prompt-to-evaluator alignment problem.
+
+Both variants used the same Codex CLI, model, sandbox, and evaluator, so the
+data does not point to a variant-specific CLI failure. The language rewrite may
+have changed what schema the model inferred, but that is only a hypothesis. In
+addition, the runner completed all `standard` attempts before starting the
+`asd-ste100` attempts instead of randomizing or interleaving them. Provider or
+time-dependent changes are therefore confounded with prompt style.
+
+The current protocol corrects these issues by stating and supplying the legacy
+fixture, using balanced interleaving, supporting an independently selected
+judge model, and removing duplicated result-level violations from new
+summaries. If the difference persists in a new run, it would support a narrower
+claim about this ASD-STE100-style rewrite on this task and model, not about the
+ASD-STE100 specification in general.
+
+Overall, the standard prompt had higher observed eval and judge scores and was
+much more likely to preserve the required legacy-storage compatibility. The
+ASD-STE100-style prompt completed about 9.7% faster on average, but its observed
+token-counter sum was about 2.9% higher.
+
+These are descriptive results for this task, repository revision, harness,
+model, and provider environment. The study summary does not include uncertainty
+estimates or a statistical-significance test, so it does not establish that
+either writing style is generally superior or that prompt style caused the
+differences. `run.completed` records harness completion, not passage of every
+required check. The observed token-counter sum adds every counter present in a
+terminal event; it is not a billing total, and counters can overlap.
+
+The terminal events recorded zero commands, tool calls, changed files, and
+errors for both variants. The retained `run.log` nevertheless contains tool
+activity and rejected commands, so those zero-valued execution counters should
+be treated as a telemetry limitation rather than evidence that no tools ran.
+See the retained
+[`comparison-summary.txt`](study-output/ASD-STE100-TODO-20261006-094849/comparison-summary.txt),
+[`study-info.txt`](study-output/ASD-STE100-TODO-20261006-094849/study-info.txt),
+and [`run.log`](study-output/ASD-STE100-TODO-20261006-094849/run.log) for the
+source output and resolved configuration.
 
 To regenerate the study-specific report from retained artifacts:
 
@@ -216,10 +354,10 @@ The last command requires `cargo-deny` to be installed. An unavailable validatio
 
 The summary groups labels such as `standard-001` by the prefix before the numeric repetition. It reports:
 
-- **Correctness and completion:** terminal completion, eval score, required checks, judge score, and violations.
+- **Correctness and completion:** terminal completion, eval score, required checks, attempts passing every required check with a descriptive 95% Wilson interval, judge score, and nonduplicated check-level findings.
 - **Token and context use:** input, cached input, cache-write, output, and reasoning tokens, plus an observed sum of the counters present in each terminal event.
 - **Execution behavior:** wall time, executed commands, failed commands, tool calls, changed files, and errors.
-- **Repository alignment:** the shared judge score and violations.
+- **Repository alignment:** the shared judge score and judge findings.
 
 Provider harnesses do not always expose every metric. A dash means that no matching run reported the value; zero remains a measured zero. The `n` beside a mean is the number of runs that reported that metric. The observed token sum does not infer missing counters.
 

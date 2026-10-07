@@ -19,6 +19,7 @@ shared_requirements:
 notes:
   - Both variants request the same objective, behavior, constraints, and deliverables.
   - Requirement identifiers make semantic correspondence reviewable.
+  - Both variants state the same legacy root-array schema and reference the same fixture.
   - The controlled variant is ASD-STE100-style; this example does not claim formal conformance.
 variants:
   - id: standard
@@ -31,4 +32,3 @@ variants:
     prompt_file: prompts/asd-ste100.md
     language_style: controlled technical English
     requirements: [R01, R02, R03, R04, R05, R06, R07, R08, R09, R10, R11, R12, R13, R14, R15]
-

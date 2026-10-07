@@ -14,13 +14,34 @@ hypothesis: >
 
 controlled_variables:
   - expanded todo CLI requirement inventory
-  - base workspace contents
+  - base workspace contents, including the explicit legacy-state fixture
   - acceptance evaluation
   - harness and model
-  - run and judge configuration
+  - run and judge configuration, including Codex workspace-write sandboxing
   - repetition count
 
 independent_variable: prompt language style
+
+primary_outcome:
+  metric: attempts passing every required deterministic check
+  summary: pass count, pass rate, and descriptive 95% Wilson interval by variant
+  rationale: avoids treating correlated checks or duplicated violation text as independent observations
+
+secondary_outcomes:
+  - mean eval score
+  - mean repository-alignment judge score
+  - nonduplicated check-level findings
+  - wall time
+  - provider-reported token counters
+
+execution_order:
+  strategy: balanced interleaved rotation
+  purpose: keep variants close in time and rotate which variant runs first
+
+legacy_state_contract:
+  fixture: .svdo/fixtures/basic-todo.json
+  root_shape: JSON array
+  note: The identical representation and example appear in both prompts.
 
 metric_focus:
   quality:
@@ -81,6 +102,7 @@ override_environment:
   SVDO_ASD_WORKSPACE: Reuse a specific empty or study workspace.
   SVDO_ASD_HARNESS: Override the harness.
   SVDO_ASD_MODEL: Override the harness-specific model identifier.
+  SVDO_ASD_JUDGE_MODEL: Override the judge model independently from the implementation model.
   SVDO_ASD_REPETITIONS: Override repetitions per variant.
   SVDO_ASD_VARIANTS: Space-separated variant ids to include.
   SVDO_ASD_OUTPUT_ROOT: Override the persistent output root.

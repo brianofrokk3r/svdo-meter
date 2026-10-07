@@ -3,7 +3,9 @@ set -euo pipefail
 
 python3 - "$@" <<'PY'
 import argparse
+from collections import Counter
 import json
+import math
 import statistics
 import sys
 from pathlib import Path
@@ -119,19 +121,28 @@ def eval_metrics(workspace, label):
     judge_scores = []
     required_passed = 0
     required_total = 0
-    violations = 0
+    check_findings = 0
+    judge_findings = 0
+    required_failures = []
+    below_threshold = False
     for result in results:
         score = numeric(result.get("overall_score"))
         if score is not None:
             scores.append(score)
-        violations += len(result.get("violations") or [])
+            threshold = numeric(result.get("threshold"))
+            if threshold is not None and score < threshold:
+                below_threshold = True
         for check in result.get("checks") or []:
             if check.get("required") is True:
                 required_total += 1
                 if check.get("outcome") == "passed" or check.get("passed") is True:
                     required_passed += 1
-            violations += len(check.get("violations") or [])
+                else:
+                    required_failures.append(check.get("id") or "(unnamed required check)")
+            findings = len(check.get("violations") or [])
+            check_findings += findings
             if (check.get("type") or check.get("check_type")) == "judge":
+                judge_findings += findings
                 judge_score = numeric(check.get("score"))
                 if judge_score is not None:
                     judge_scores.append(judge_score)
@@ -140,7 +151,12 @@ def eval_metrics(workspace, label):
         "judge_score": statistics.fmean(judge_scores) if judge_scores else None,
         "required_passed": required_passed,
         "required_total": required_total,
-        "violations": violations,
+        "has_required_checks": required_total > 0,
+        "all_required_passed": required_total > 0 and required_passed == required_total,
+        "check_findings": check_findings,
+        "judge_findings": judge_findings,
+        "required_failures": required_failures,
+        "below_threshold": below_threshold,
     }
 
 
@@ -158,6 +174,26 @@ def metric_cell(values, digits=1):
 
 def score_cell(value):
     return "-" if value is None else f"{value:.2f}"
+
+
+def proportion_cell(successes, total):
+    if total == 0:
+        return "-"
+    proportion = successes / total
+    z = 1.96
+    denominator = 1 + z * z / total
+    center = (proportion + z * z / (2 * total)) / denominator
+    margin = (
+        z
+        * math.sqrt(
+            proportion * (1 - proportion) / total + z * z / (4 * total * total)
+        )
+        / denominator
+    )
+    return (
+        f"{successes}/{total} ({proportion:.1%}; "
+        f"95% CI {(center - margin):.1%}-{(center + margin):.1%})"
+    )
 
 
 def table(headers, rows):
@@ -185,19 +221,32 @@ def group_runs(workspace, runs):
                 "judge_scores": [],
                 "required_passed": 0,
                 "required_total": 0,
-                "violations": 0,
+                "evaluated_runs": 0,
+                "required_evaluated_runs": 0,
+                "all_required_runs": 0,
+                "check_findings": 0,
+                "judge_findings": 0,
+                "below_threshold_runs": 0,
+                "required_failures": Counter(),
             },
         )
         group["runs"].append(run)
         evaluation = eval_metrics(workspace, run["label"])
         if evaluation:
+            group["evaluated_runs"] += 1
             if evaluation["score"] is not None:
                 group["eval_scores"].append(evaluation["score"])
             if evaluation["judge_score"] is not None:
                 group["judge_scores"].append(evaluation["judge_score"])
             group["required_passed"] += evaluation["required_passed"]
             group["required_total"] += evaluation["required_total"]
-            group["violations"] += evaluation["violations"]
+            if evaluation["has_required_checks"]:
+                group["required_evaluated_runs"] += 1
+                group["all_required_runs"] += int(evaluation["all_required_passed"])
+            group["check_findings"] += evaluation["check_findings"]
+            group["judge_findings"] += evaluation["judge_findings"]
+            group["below_threshold_runs"] += int(evaluation["below_threshold"])
+            group["required_failures"].update(evaluation["required_failures"])
     return groups
 
 
@@ -216,7 +265,8 @@ def main():
     print("=" * 58)
     print(f"Workspace: {workspace}")
     print("Grouping: label prefix before the trailing numeric repetition")
-    print("Values are means; n is the number of runs that reported the metric.")
+    print("Metric values are means; n is the number of runs that reported the metric.")
+    print("Quality pass and finding values are counts across evaluated runs.")
     print("Observed token sum adds only token counters present in each terminal event.")
     print()
 
@@ -243,7 +293,11 @@ def main():
                     if group["required_total"]
                     else "-"
                 ),
-                group["violations"],
+                proportion_cell(
+                    group["all_required_runs"], group["required_evaluated_runs"]
+                ),
+                f"{group['below_threshold_runs']}/{group['evaluated_runs']}",
+                f"{group['check_findings']} ({group['judge_findings']} judge)",
             ]
         )
         execution_rows.append(
@@ -260,15 +314,37 @@ def main():
 
     print("Quality and repository alignment")
     print(table(
-        ["Variant", "Runs", "Completed", "Eval", "Judge", "Required", "Violations"],
+        ["Variant", "Runs", "Completed", "Eval", "Judge", "Required", "All required runs", "Below threshold", "Findings"],
         quality_rows,
     ))
+    print("Findings count check-level violation entries once; result-level copies and score-threshold messages are excluded.")
+    print("All-required-run intervals are descriptive 95% Wilson intervals, not causal estimates.")
+
+    required_failure_rows = []
+    for variant in ordered_variants(groups):
+        group = groups[variant]
+        for check_id, count in group["required_failures"].most_common():
+            required_failure_rows.append([variant, check_id, count, group["evaluated_runs"]])
+    if required_failure_rows:
+        print()
+        print("Required check failures")
+        print(table(["Variant", "Check", "Failed runs", "Evaluated runs"], required_failure_rows))
     print()
     print("Execution behavior")
     print(table(
         ["Variant", "Wall ms", "Commands", "Failed cmd", "Tool calls", "Files", "Errors"],
         execution_rows,
     ))
+    activity_fields = ("commands_executed", "tool_calls", "files_changed")
+    activity_values = [
+        run[field]
+        for group in groups.values()
+        for run in group["runs"]
+        for field in activity_fields
+        if run[field] is not None
+    ]
+    if activity_values and all(value == 0 for value in activity_values):
+        print("Warning: every observed command, tool-call, and file-change counter is zero; verify harness telemetry before interpreting execution behavior.")
     print()
     print("Token and context usage")
     print(table(

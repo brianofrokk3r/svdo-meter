@@ -1,0 +1,31 @@
+id: follows-agent-directions
+task: |
+  Evaluate whether the current repository state follows this repository's
+  agent-facing instructions and standards.
+
+checks:
+  - id: instructions-present
+    type: command
+    command: test -f AGENTS.md && test -f .svdo/standards.md
+    required: true
+    weight: 0.1
+
+  - id: tests-pass
+    type: command
+    command: cargo test --workspace
+    required: true
+    weight: 0.4
+
+  - id: generated-standards-untouched
+    type: command
+    command: git diff --quiet -- .svdo/standards/
+    required: true
+    weight: 0.2
+
+  - id: alignment-review
+    type: judge
+    standard: repository-alignment
+    required: true
+    weight: 0.3
+
+threshold: 0.9

@@ -37,7 +37,7 @@ checks:
 
   - id: malformed-storage-and-legacy-records
     type: command
-    command: tmpdir=$(mktemp -d) && cp todo.py "$tmpdir/todo.py" && cd "$tmpdir" && printf '{bad json\n' > .todo.json && cp .todo.json before.json && ! python todo.py list >out 2>err && test -s err && cmp before.json .todo.json && printf '[{"id":1,"text":"Legacy","completed":false}]\n' > .todo.json && python todo.py list > legacy.out && test "$(cat legacy.out)" = "1. [ ] Legacy"
+    command: fixture="$PWD/.svdo/fixtures/basic-todo.json" && test -f "$fixture" && tmpdir=$(mktemp -d) && cp todo.py "$tmpdir/todo.py" && cd "$tmpdir" && printf '{bad json\n' > .todo.json && cp .todo.json malformed-before.json && ! python todo.py list >out 2>err && test -s err && cmp malformed-before.json .todo.json && cp "$fixture" .todo.json && cp .todo.json legacy-before.json && python todo.py list > legacy.out && test "$(cat legacy.out)" = "1. [ ] Legacy" && cmp legacy-before.json .todo.json && python todo.py delete 1 >/dev/null && python todo.py add "After legacy" > add.out && grep -Fx "Added 2: After legacy" add.out
     required: true
     weight: 0.1
 
@@ -51,4 +51,3 @@ checks:
     type: judge
     standard: expanded-todo-cli-quality
     weight: 0.1
-
